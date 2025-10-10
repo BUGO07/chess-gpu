@@ -10,6 +10,8 @@ use winit::{
     window::Window,
 };
 
+pub mod texture;
+
 pub struct State {
     surface: wgpu::Surface<'static>,
     device: wgpu::Device,
@@ -18,6 +20,7 @@ pub struct State {
     vertex_buffer: wgpu::Buffer,
     surface_configured: bool,
     render_pipeline: wgpu::RenderPipeline,
+    texture_bind_group: wgpu::BindGroup,
     window: Arc<Window>,
 }
 
@@ -115,10 +118,50 @@ impl State {
             source: wgpu::ShaderSource::Wgsl(std::fs::read_to_string("assets/shader.wgsl")?.into()),
         });
 
+        let texture_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                entries: &[
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Texture {
+                            multisampled: false,
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                        count: None,
+                    },
+                ],
+                label: Some("texture_bind_group_layout"),
+            });
+
+        let tex = texture::Texture::from_assets(&device, &queue, "atlas.png".into(), false)?;
+
+        let texture_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            layout: &texture_bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&tex.view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(&tex.sampler),
+                },
+            ],
+            label: None,
+        });
+
         let render_pipeline_layout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("Render Pipeline Layout"),
-                bind_group_layouts: &[],
+                bind_group_layouts: &[&texture_bind_group_layout],
                 push_constant_ranges: &[],
             });
 
@@ -176,6 +219,7 @@ impl State {
             vertex_buffer,
             surface_configured: false,
             render_pipeline,
+            texture_bind_group,
             window,
         })
     }
@@ -232,6 +276,7 @@ impl State {
             });
 
             render_pass.set_pipeline(&self.render_pipeline);
+            render_pass.set_bind_group(0, &self.texture_bind_group, &[]);
             render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
             render_pass.draw(0..VERTICES.len() as u32, 0..1);
         }
