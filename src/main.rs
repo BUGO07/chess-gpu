@@ -3,6 +3,7 @@ use std::sync::Arc;
 use wgpu::util::DeviceExt;
 use winit::{
     application::ApplicationHandler,
+    dpi::PhysicalSize,
     event::*,
     event_loop::{ActiveEventLoop, EventLoop},
     keyboard::{KeyCode, PhysicalKey},
@@ -24,42 +25,40 @@ pub struct State {
 #[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
 struct Vertex {
     position: [f32; 3],
-    color: [f32; 3],
 }
 
 impl Vertex {
     fn desc() -> wgpu::VertexBufferLayout<'static> {
         wgpu::VertexBufferLayout {
-            array_stride: std::mem::size_of::<Vertex>() as wgpu::BufferAddress,
+            array_stride: size_of::<Vertex>() as wgpu::BufferAddress,
             step_mode: wgpu::VertexStepMode::Vertex,
-            attributes: &[
-                wgpu::VertexAttribute {
-                    offset: 0,
-                    shader_location: 0,
-                    format: wgpu::VertexFormat::Float32x3,
-                },
-                wgpu::VertexAttribute {
-                    offset: std::mem::size_of::<[f32; 3]>() as wgpu::BufferAddress,
-                    shader_location: 1,
-                    format: wgpu::VertexFormat::Float32x3,
-                },
-            ],
+            attributes: &[wgpu::VertexAttribute {
+                offset: 0,
+                shader_location: 0,
+                format: wgpu::VertexFormat::Float32x3,
+            }],
         }
     }
 }
 
 const VERTICES: &[Vertex] = &[
     Vertex {
-        position: [0.0, 0.5, 0.0],
-        color: [1.0, 0.0, 0.0],
+        position: [-1.0, 1.0, 0.0],
     },
     Vertex {
-        position: [-0.5, -0.5, 0.0],
-        color: [0.0, 1.0, 0.0],
+        position: [-1.0, -1.0, 0.0],
     },
     Vertex {
-        position: [0.5, -0.5, 0.0],
-        color: [0.0, 0.0, 1.0],
+        position: [1.0, -1.0, 0.0],
+    },
+    Vertex {
+        position: [-1.0, 1.0, 0.0],
+    },
+    Vertex {
+        position: [1.0, -1.0, 0.0],
+    },
+    Vertex {
+        position: [1.0, 1.0, 0.0],
     },
 ];
 
@@ -105,8 +104,8 @@ impl State {
             format: surface_format,
             width: size.width,
             height: size.height,
-            present_mode: surface_caps.present_modes[0],
-            alpha_mode: surface_caps.alpha_modes[0],
+            present_mode: wgpu::PresentMode::AutoVsync,
+            alpha_mode: wgpu::CompositeAlphaMode::Auto,
             view_formats: vec![],
             desired_maximum_frame_latency: 2,
         };
@@ -250,7 +249,10 @@ pub struct App {
 }
 impl ApplicationHandler<State> for App {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
-        let window_attributes = Window::default_attributes().with_title("GPU Chess");
+        let window_attributes = Window::default_attributes()
+            .with_title("GPU Chess")
+            .with_resizable(false)
+            .with_inner_size(PhysicalSize::new(800, 800));
 
         let window = Arc::new(event_loop.create_window(window_attributes).unwrap());
 
@@ -285,7 +287,7 @@ impl ApplicationHandler<State> for App {
                         state.resize(size.width, size.height);
                     }
                     Err(e) => {
-                        log::error!("Unable to render {}", e);
+                        log::error!("Unable to rendear {}", e);
                     }
                 }
             }
