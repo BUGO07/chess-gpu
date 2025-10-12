@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use glam::Vec3;
 use wgpu::util::DeviceExt;
 use winit::{
     application::ApplicationHandler,
@@ -11,15 +12,21 @@ use winit::{
 };
 
 pub mod texture;
+pub mod utils;
 
 pub struct State {
     surface: wgpu::Surface<'static>,
     device: wgpu::Device,
     queue: wgpu::Queue,
     config: wgpu::SurfaceConfiguration,
-    vertex_buffer: wgpu::Buffer,
+    piece_vb: wgpu::Buffer,
+    board_vb: wgpu::Buffer,
+    index_buffer: wgpu::Buffer,
+    instances: Vec<Instance>,
+    instance_buffer: wgpu::Buffer,
     surface_configured: bool,
-    render_pipeline: wgpu::RenderPipeline,
+    pieces_render_pipeline: wgpu::RenderPipeline,
+    board_render_pipeline: wgpu::RenderPipeline,
     texture_bind_group: wgpu::BindGroup,
     window: Arc<Window>,
 }
@@ -44,26 +51,33 @@ impl Vertex {
     }
 }
 
-const VERTICES: &[Vertex] = &[
-    Vertex {
-        position: [-1.0, 1.0, 0.0],
-    },
-    Vertex {
-        position: [-1.0, -1.0, 0.0],
-    },
-    Vertex {
-        position: [1.0, -1.0, 0.0],
-    },
-    Vertex {
-        position: [-1.0, 1.0, 0.0],
-    },
-    Vertex {
-        position: [1.0, -1.0, 0.0],
-    },
-    Vertex {
-        position: [1.0, 1.0, 0.0],
-    },
-];
+#[repr(C)]
+#[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
+struct Instance {
+    position: [f32; 3],
+    idx: u32,
+}
+
+impl Instance {
+    fn desc() -> wgpu::VertexBufferLayout<'static> {
+        wgpu::VertexBufferLayout {
+            array_stride: size_of::<Instance>() as wgpu::BufferAddress,
+            step_mode: wgpu::VertexStepMode::Instance,
+            attributes: &[
+                wgpu::VertexAttribute {
+                    offset: 0,
+                    shader_location: 1,
+                    format: wgpu::VertexFormat::Float32x3,
+                },
+                wgpu::VertexAttribute {
+                    offset: size_of::<[f32; 3]>() as wgpu::BufferAddress,
+                    shader_location: 2,
+                    format: wgpu::VertexFormat::Uint32,
+                },
+            ],
+        }
+    }
+}
 
 impl State {
     pub async fn new(window: Arc<Window>) -> anyhow::Result<Self> {
@@ -113,9 +127,14 @@ impl State {
             desired_maximum_frame_latency: 2,
         };
 
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        let pieces_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("Shader"),
-            source: wgpu::ShaderSource::Wgsl(std::fs::read_to_string("assets/shader.wgsl")?.into()),
+            source: wgpu::ShaderSource::Wgsl(std::fs::read_to_string("assets/pieces.wgsl")?.into()),
+        });
+
+        let board_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("Shader"),
+            source: wgpu::ShaderSource::Wgsl(std::fs::read_to_string("assets/board.wgsl")?.into()),
         });
 
         let texture_bind_group_layout =
@@ -158,57 +177,143 @@ impl State {
             label: None,
         });
 
-        let render_pipeline_layout =
+        let pieces_render_pipeline_layout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("Render Pipeline Layout"),
                 bind_group_layouts: &[&texture_bind_group_layout],
                 push_constant_ranges: &[],
             });
 
-        let render_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("Render Pipeline"),
-            layout: Some(&render_pipeline_layout),
-            vertex: wgpu::VertexState {
-                module: &shader,
-                entry_point: Some("vs_main"),
-                buffers: &[Vertex::desc()],
-                compilation_options: wgpu::PipelineCompilationOptions::default(),
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: &shader,
-                entry_point: Some("fs_main"),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format: config.format,
-                    blend: Some(wgpu::BlendState::REPLACE),
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-                compilation_options: wgpu::PipelineCompilationOptions::default(),
-            }),
+        let pieces_render_pipeline =
+            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some("Render Pipeline"),
+                layout: Some(&pieces_render_pipeline_layout),
+                vertex: wgpu::VertexState {
+                    module: &pieces_shader,
+                    entry_point: Some("vs_main"),
+                    buffers: &[Vertex::desc(), Instance::desc()],
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: &pieces_shader,
+                    entry_point: Some("fs_main"),
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format: config.format,
+                        blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                }),
 
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleList,
-                strip_index_format: None,
-                front_face: wgpu::FrontFace::Ccw,
-                cull_mode: Some(wgpu::Face::Back),
-                polygon_mode: wgpu::PolygonMode::Fill,
-                unclipped_depth: false,
-                conservative: false,
-            },
+                primitive: wgpu::PrimitiveState {
+                    topology: wgpu::PrimitiveTopology::TriangleList,
+                    strip_index_format: None,
+                    front_face: wgpu::FrontFace::Ccw,
+                    cull_mode: Some(wgpu::Face::Back),
+                    polygon_mode: wgpu::PolygonMode::Fill,
+                    unclipped_depth: false,
+                    conservative: false,
+                },
 
-            depth_stencil: None,
-            multisample: wgpu::MultisampleState {
-                count: 1,
-                mask: !0,
-                alpha_to_coverage_enabled: false,
-            },
-            multiview: None,
-            cache: None,
+                depth_stencil: None,
+                multisample: wgpu::MultisampleState {
+                    count: 1,
+                    mask: !0,
+                    alpha_to_coverage_enabled: false,
+                },
+                multiview: None,
+                cache: None,
+            });
+
+        let board_render_pipeline_layout =
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("Render Pipeline Layout"),
+                bind_group_layouts: &[],
+                push_constant_ranges: &[],
+            });
+
+        let board_render_pipeline =
+            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some("Render Pipeline"),
+                layout: Some(&board_render_pipeline_layout),
+                vertex: wgpu::VertexState {
+                    module: &board_shader,
+                    entry_point: Some("vs_main"),
+                    buffers: &[Vertex::desc()],
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: &board_shader,
+                    entry_point: Some("fs_main"),
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format: config.format,
+                        blend: Some(wgpu::BlendState::REPLACE),
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                }),
+
+                primitive: wgpu::PrimitiveState {
+                    topology: wgpu::PrimitiveTopology::TriangleList,
+                    strip_index_format: None,
+                    front_face: wgpu::FrontFace::Ccw,
+                    cull_mode: Some(wgpu::Face::Back),
+                    polygon_mode: wgpu::PolygonMode::Fill,
+                    unclipped_depth: false,
+                    conservative: false,
+                },
+
+                depth_stencil: None,
+                multisample: wgpu::MultisampleState {
+                    count: 1,
+                    mask: !0,
+                    alpha_to_coverage_enabled: false,
+                },
+                multiview: None,
+                cache: None,
+            });
+
+        let instances = (-4..4)
+            .flat_map(|y| {
+                (-4..4).map(move |x| {
+                    let position = Vec3::new(x as f32 + 0.1, y as f32 + 0.1, 0.0) * 0.125;
+
+                    Instance {
+                        position: position.into(),
+                        idx: (y + 4) as u32,
+                    }
+                })
+            })
+            .collect::<Vec<_>>();
+
+        let instance_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Instance Buffer"),
+            contents: bytemuck::cast_slice(&instances),
+            usage: wgpu::BufferUsages::VERTEX,
         });
 
-        let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Vertex Buffer"),
-            contents: bytemuck::cast_slice(VERTICES),
+        let piece_vertices =
+            utils::Quad::from(Vec3::ZERO, Vec3::ONE * 0.1).map(|pos| Vertex { position: pos });
+
+        let piece_vb = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Pieces Vertex Buffer"),
+            contents: bytemuck::cast_slice(&piece_vertices),
             usage: wgpu::BufferUsages::VERTEX,
+        });
+
+        let board_vertices = utils::Quad::from(Vec3::new(-0.5, -0.5, 0.0), Vec3::ONE)
+            .map(|pos| Vertex { position: pos });
+
+        let board_vb = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Vertex Buffer"),
+            contents: bytemuck::cast_slice(&board_vertices),
+            usage: wgpu::BufferUsages::VERTEX,
+        });
+
+        let index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Index Buffer"),
+            contents: bytemuck::cast_slice(&utils::Quad::generate_indices(4)),
+            usage: wgpu::BufferUsages::INDEX,
         });
 
         Ok(Self {
@@ -216,9 +321,14 @@ impl State {
             device,
             queue,
             config,
-            vertex_buffer,
+            piece_vb,
+            board_vb,
+            index_buffer,
+            instances,
+            instance_buffer,
             surface_configured: false,
-            render_pipeline,
+            pieces_render_pipeline,
+            board_render_pipeline,
             texture_bind_group,
             window,
         })
@@ -275,10 +385,19 @@ impl State {
                 timestamp_writes: None,
             });
 
-            render_pass.set_pipeline(&self.render_pipeline);
+            // board
+            render_pass.set_pipeline(&self.board_render_pipeline);
+            render_pass.set_vertex_buffer(0, self.board_vb.slice(..));
+            render_pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+            render_pass.draw_indexed(0..6, 0, 0..1);
+
+            // pieces
+            render_pass.set_pipeline(&self.pieces_render_pipeline);
             render_pass.set_bind_group(0, &self.texture_bind_group, &[]);
-            render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
-            render_pass.draw(0..VERTICES.len() as u32, 0..1);
+            render_pass.set_vertex_buffer(0, self.piece_vb.slice(..));
+            render_pass.set_vertex_buffer(1, self.instance_buffer.slice(..));
+            render_pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+            render_pass.draw_indexed(0..6, 0, 0..self.instances.len() as u32);
         }
 
         self.queue.submit(std::iter::once(encoder.finish()));

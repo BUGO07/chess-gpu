@@ -2,9 +2,14 @@ struct VertexInput {
     @location(0) position: vec3<f32>,
 };
 
+struct InstanceInput {
+    @location(1) position: vec3<f32>,
+    @location(2) idx: u32,
+};
+
 struct VertexOutput {
     @builtin(position) clip_position: vec4<f32>,
-    @location(0) vertex_position: vec3<f32>,
+    @location(0) local_position: vec3<f32>,
     @location(1) uv: vec2<f32>,
 };
 
@@ -18,13 +23,12 @@ fn get_uv(index: u32, position: vec2<f32>) -> vec2<f32> {
 }
 
 @vertex
-fn vs_main(model: VertexInput) -> VertexOutput {
+fn vs_main(vertex: VertexInput, instance: InstanceInput) -> VertexOutput {
     var out: VertexOutput;
 
-    out.vertex_position = model.position;
-    out.clip_position = vec4<f32>(model.position, 1.0);
-
-    out.uv = get_uv(0u, model.position.xy * 0.5 + 0.5);
+    out.clip_position = vec4<f32>(vertex.position + instance.position, 1.0);
+    out.local_position = instance.position;
+    out.uv = get_uv(instance.idx, vertex.position.xy * 10.0);
 
     return out;
 }
@@ -37,5 +41,6 @@ var pieces_sampler: sampler;
 
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
-    return textureSample(pieces_texture, pieces_sampler, in.uv);
+    let texture = textureSample(pieces_texture, pieces_sampler, in.uv);
+    return vec4<f32>(mix(texture.rgb, in.local_position, 0.5), texture.a);
 }
