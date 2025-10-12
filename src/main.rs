@@ -22,12 +22,15 @@ pub struct State {
     piece_vb: wgpu::Buffer,
     board_vb: wgpu::Buffer,
     index_buffer: wgpu::Buffer,
-    instances: Vec<Instance>,
+    instances: Vec<ChessPiece>,
     instance_buffer: wgpu::Buffer,
     surface_configured: bool,
     pieces_render_pipeline: wgpu::RenderPipeline,
     board_render_pipeline: wgpu::RenderPipeline,
     texture_bind_group: wgpu::BindGroup,
+    game_info_bind_group: wgpu::BindGroup,
+    game_info_buffer: wgpu::Buffer,
+    game_info: GameInfo,
     window: Arc<Window>,
 }
 
@@ -53,24 +56,32 @@ impl Vertex {
 
 #[repr(C)]
 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
-struct Instance {
-    position: [f32; 3],
-    idx: u32,
+struct GameInfo {
+    hovered: u32,
+    selected: u32,
+    _pad: [u32; 2],
 }
 
-impl Instance {
+#[repr(C)]
+#[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
+struct ChessPiece {
+    position: u32,
+    piece: u32,
+}
+
+impl ChessPiece {
     fn desc() -> wgpu::VertexBufferLayout<'static> {
         wgpu::VertexBufferLayout {
-            array_stride: size_of::<Instance>() as wgpu::BufferAddress,
+            array_stride: size_of::<ChessPiece>() as wgpu::BufferAddress,
             step_mode: wgpu::VertexStepMode::Instance,
             attributes: &[
                 wgpu::VertexAttribute {
                     offset: 0,
                     shader_location: 1,
-                    format: wgpu::VertexFormat::Float32x3,
+                    format: wgpu::VertexFormat::Uint32,
                 },
                 wgpu::VertexAttribute {
-                    offset: size_of::<[f32; 3]>() as wgpu::BufferAddress,
+                    offset: size_of::<u32>() as wgpu::BufferAddress,
                     shader_location: 2,
                     format: wgpu::VertexFormat::Uint32,
                 },
@@ -177,10 +188,46 @@ impl State {
             label: None,
         });
 
+        let game_info = GameInfo {
+            hovered: 0,
+            selected: 0,
+            _pad: [0; 2],
+        };
+
+        let game_info_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Game Info Buffer"),
+            contents: bytemuck::cast_slice(&[game_info]),
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        });
+
+        let game_info_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                entries: &[wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                }],
+                label: Some("game_info_bind_group_layout"),
+            });
+
+        let game_info_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            layout: &game_info_bind_group_layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: game_info_buffer.as_entire_binding(),
+            }],
+            label: Some("game_info_bind_group"),
+        });
+
         let pieces_render_pipeline_layout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("Render Pipeline Layout"),
-                bind_group_layouts: &[&texture_bind_group_layout],
+                bind_group_layouts: &[&texture_bind_group_layout, &game_info_bind_group_layout],
                 push_constant_ranges: &[],
             });
 
@@ -191,7 +238,7 @@ impl State {
                 vertex: wgpu::VertexState {
                     module: &pieces_shader,
                     entry_point: Some("vs_main"),
-                    buffers: &[Vertex::desc(), Instance::desc()],
+                    buffers: &[Vertex::desc(), ChessPiece::desc()],
                     compilation_options: wgpu::PipelineCompilationOptions::default(),
                 },
                 fragment: Some(wgpu::FragmentState {
@@ -273,22 +320,16 @@ impl State {
                 cache: None,
             });
 
-        let instances = (-4..4)
-            .flat_map(|y| {
-                (-4..4).map(move |x| {
-                    let position = Vec3::new(x as f32 + 0.1, y as f32 + 0.1, 0.0) * 0.125;
-
-                    Instance {
-                        position: position.into(),
-                        idx: (y + 4) as u32,
-                    }
-                })
+        let chess_pieces = (0..64)
+            .map(move |position| ChessPiece {
+                position,
+                piece: position / 8,
             })
             .collect::<Vec<_>>();
 
         let instance_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Instance Buffer"),
-            contents: bytemuck::cast_slice(&instances),
+            contents: bytemuck::cast_slice(&chess_pieces),
             usage: wgpu::BufferUsages::VERTEX,
         });
 
@@ -324,12 +365,15 @@ impl State {
             piece_vb,
             board_vb,
             index_buffer,
-            instances,
+            instances: chess_pieces,
             instance_buffer,
             surface_configured: false,
             pieces_render_pipeline,
             board_render_pipeline,
             texture_bind_group,
+            game_info_bind_group,
+            game_info_buffer,
+            game_info,
             window,
         })
     }
@@ -394,6 +438,7 @@ impl State {
             // pieces
             render_pass.set_pipeline(&self.pieces_render_pipeline);
             render_pass.set_bind_group(0, &self.texture_bind_group, &[]);
+            render_pass.set_bind_group(1, &self.game_info_bind_group, &[]);
             render_pass.set_vertex_buffer(0, self.piece_vb.slice(..));
             render_pass.set_vertex_buffer(1, self.instance_buffer.slice(..));
             render_pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
@@ -466,6 +511,34 @@ impl ApplicationHandler<State> for App {
             } => {
                 if let (KeyCode::Escape, true) = (code, key_state.is_pressed()) {
                     event_loop.exit()
+                }
+            }
+            WindowEvent::CursorMoved {
+                device_id: _,
+                position,
+            } => {
+                let size = state.window.inner_size();
+                // do a reverse of this for x and y
+                //             let instance_position = vec3<f32>(
+                //     (f32(i32(instance.position) % 8 - 4) + 0.1) * 0.125,
+                //     (f32(i32(instance.position) / 8 - 4) + 0.1) * 0.125,
+                //     0.0,
+                // );
+                let x = ((position.x / size.width as f64 - 0.25) * 16.0) as i32;
+                let y = ((1.0 - position.y / size.height as f64 - 0.25) * 16.0) as i32;
+                let hovered = if !(0..8).contains(&x) || !(0..8).contains(&y) {
+                    0
+                } else {
+                    (y * 8 + x) as u32 + 1
+                };
+                if hovered != state.game_info.hovered {
+                    state.game_info.hovered = hovered;
+                    state.queue.write_buffer(
+                        &state.game_info_buffer,
+                        0,
+                        bytemuck::cast_slice(&[state.game_info]),
+                    );
+                    state.window.request_redraw();
                 }
             }
             _ => {}
