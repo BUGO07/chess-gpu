@@ -568,11 +568,6 @@ impl ApplicationHandler<State> for App {
                 };
                 if hovered != state.game_info.hovered {
                     state.game_info.hovered = hovered;
-                    state.queue.write_buffer(
-                        &state.game_info_buffer,
-                        0,
-                        bytemuck::cast_slice(&[state.game_info]),
-                    );
                     state.window.request_redraw();
                 }
             }
@@ -584,6 +579,7 @@ impl ApplicationHandler<State> for App {
                 if button == MouseButton::Left && button_state == ElementState::Pressed {
                     if state.game_info.selected == state.game_info.hovered {
                         state.game_info.selected = 0;
+                        state.game_info.legal_moves = [0; 256];
                     } else if state.game_info.selected != 0 && state.game_info.hovered != 0 {
                         let from = state.game_info.selected as u8 - 1;
                         let to = state.game_info.hovered as u8 - 1;
@@ -657,11 +653,6 @@ impl ApplicationHandler<State> for App {
                         }
                         state.game_info.legal_moves = legal_move_array;
                     }
-                    state.queue.write_buffer(
-                        &state.game_info_buffer,
-                        0,
-                        bytemuck::cast_slice(&[state.game_info]),
-                    );
                     state.window.request_redraw();
                 }
             }

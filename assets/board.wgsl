@@ -59,6 +59,10 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
             return mix(color, vec4<f32>(0.20, 0.80, 0.20, 1.0), 0.7);
         }
 
+        if game_info.selected == u32(y * 8 + x) + 1u {
+            return mix(color, vec4<f32>(0.80, 0.20, 0.80, 1.0), 0.7);
+        }
+
         return color;
     }
 

@@ -68,7 +68,7 @@ struct GameInfo {
 var<uniform> game_info: GameInfo;
 
 fn hsl_to_rgb(hsl: vec3<f32>) -> vec3<f32> {
-    let h = hsl.x / 360.0; // normalize hue to 0-1
+    let h = hsl.x; // normalize hue to 0-1
     let s = hsl.y;
     let l = hsl.z;
 
@@ -92,7 +92,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     } else if game_info.hovered == in.idx {
         return vec4<f32>(mix(texture.rgb, vec3<f32>(1.0, 1.0, 0.0), 0.5), texture.a);
     }
-    let rgb = hsl_to_rgb(vec3<f32>(sin(game_info.time + length(in.local_position.xy)) * 180.0 + 180.0, 1.0, 0.5));
+    let rgb = hsl_to_rgb(vec3<f32>(sin(game_info.time + length(in.local_position.xy)) * 0.5 + 0.5, 1.0, 0.5));
     if in.white == game_info.white_to_play {
         return vec4<f32>(mix(texture.rgb, rgb, 0.5), texture.a);
     } else {
