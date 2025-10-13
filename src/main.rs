@@ -32,6 +32,7 @@ pub struct State {
     game_info_bind_group: wgpu::BindGroup,
     game_info_buffer: wgpu::Buffer,
     game_info: GameInfo,
+    last_time: std::time::Instant,
     board_state: logic::BoardState,
     window: Arc<Window>,
 }
@@ -61,7 +62,8 @@ impl Vertex {
 struct GameInfo {
     hovered: u32,
     selected: u32,
-    _pad: [u32; 2],
+    time: f32,
+    white_to_play: u32,
     legal_moves: [u32; 256],
 }
 
@@ -70,6 +72,7 @@ struct GameInfo {
 struct Instance {
     position: u32,
     piece: u32,
+    white: u32,
 }
 
 impl Instance {
@@ -86,6 +89,11 @@ impl Instance {
                 wgpu::VertexAttribute {
                     offset: size_of::<u32>() as wgpu::BufferAddress,
                     shader_location: 2,
+                    format: wgpu::VertexFormat::Uint32,
+                },
+                wgpu::VertexAttribute {
+                    offset: (size_of::<u32>() * 2) as wgpu::BufferAddress,
+                    shader_location: 3,
                     format: wgpu::VertexFormat::Uint32,
                 },
             ],
@@ -194,8 +202,9 @@ impl State {
         let game_info = GameInfo {
             hovered: 0,
             selected: 0,
+            time: 0.0,
             legal_moves: [0; 256],
-            _pad: [0; 2],
+            white_to_play: 1,
         };
 
         let game_info_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -341,6 +350,7 @@ impl State {
                 Some(Instance {
                     position: index as u32,
                     piece: piece.to_idx(),
+                    white: piece.white as u32,
                 })
             })
             .collect::<Vec<_>>();
@@ -392,6 +402,7 @@ impl State {
             game_info_bind_group,
             game_info_buffer,
             game_info,
+            last_time: std::time::Instant::now(),
             board_state,
             window,
         })
@@ -406,7 +417,17 @@ impl State {
         }
     }
 
-    pub fn update(&mut self) {}
+    pub fn update(&mut self) {
+        let now = std::time::Instant::now();
+        self.game_info.time += now.duration_since(self.last_time).as_secs_f32();
+        self.game_info.white_to_play = self.board_state.white_to_play as u32;
+        self.last_time = now;
+        self.queue.write_buffer(
+            &self.game_info_buffer,
+            0,
+            bytemuck::cast_slice(&[self.game_info]),
+        );
+    }
 
     pub fn render(&mut self) -> Result<(), wgpu::SurfaceError> {
         self.window.request_redraw();
@@ -588,6 +609,7 @@ impl ApplicationHandler<State> for App {
                                     Some(Instance {
                                         position: index as u32,
                                         piece: piece.to_idx(),
+                                        white: piece.white as u32,
                                     })
                                 })
                                 .collect::<Vec<_>>();

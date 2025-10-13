@@ -25,7 +25,8 @@ struct U32Aligned {
 struct GameInfo {
     hovered: u32,
     selected: u32,
-    _pad: vec2<u32>,
+    time: f32,
+    white_to_play: u32,
     legal_moves: array<U32Aligned, 64>,
 };
 
