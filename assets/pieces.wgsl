@@ -48,10 +48,16 @@ var pieces_texture: texture_2d<f32>;
 @group(0) @binding(1)
 var pieces_sampler: sampler;
 
+struct U32Aligned {
+    @align(16)
+    value: u32,
+}
+
 struct GameInfo {
     hovered: u32,
     selected: u32,
     _pad: vec2<u32>,
+    legal_moves: array<U32Aligned, 64>,
 };
 
 @group(1) @binding(0)
@@ -61,8 +67,16 @@ var<uniform> game_info: GameInfo;
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let texture = textureSample(pieces_texture, pieces_sampler, in.uv);
     var color = in.local_position;
-    if game_info.hovered == in.idx {
+    var mix = 0.5;
+    if game_info.selected == in.idx && game_info.hovered == in.idx {
+        color = vec3<f32>(0.0, 0.4, 1.0);
+        mix = 0.5;
+    } else if game_info.selected == in.idx {
+        color = vec3<f32>(0.0, 0.0, 1.0);
+        mix = 0.5;
+    } else if game_info.hovered == in.idx {
         color = vec3<f32>(1.0, 1.0, 0.0);
+        mix = 0.5;
     }
-    return vec4<f32>(mix(texture.rgb, color, 0.5), texture.a);
+    return vec4<f32>(mix(texture.rgb, color, mix), texture.a);
 }

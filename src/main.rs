@@ -11,6 +11,7 @@ use winit::{
     window::Window,
 };
 
+pub mod logic;
 pub mod texture;
 pub mod utils;
 
@@ -22,7 +23,7 @@ pub struct State {
     piece_vb: wgpu::Buffer,
     board_vb: wgpu::Buffer,
     index_buffer: wgpu::Buffer,
-    instances: Vec<ChessPiece>,
+    instances: Vec<Instance>,
     instance_buffer: wgpu::Buffer,
     surface_configured: bool,
     pieces_render_pipeline: wgpu::RenderPipeline,
@@ -31,6 +32,7 @@ pub struct State {
     game_info_bind_group: wgpu::BindGroup,
     game_info_buffer: wgpu::Buffer,
     game_info: GameInfo,
+    board_state: logic::BoardState,
     window: Arc<Window>,
 }
 
@@ -60,19 +62,20 @@ struct GameInfo {
     hovered: u32,
     selected: u32,
     _pad: [u32; 2],
+    legal_moves: [u32; 256],
 }
 
 #[repr(C)]
 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
-struct ChessPiece {
+struct Instance {
     position: u32,
     piece: u32,
 }
 
-impl ChessPiece {
+impl Instance {
     fn desc() -> wgpu::VertexBufferLayout<'static> {
         wgpu::VertexBufferLayout {
-            array_stride: size_of::<ChessPiece>() as wgpu::BufferAddress,
+            array_stride: size_of::<Instance>() as wgpu::BufferAddress,
             step_mode: wgpu::VertexStepMode::Instance,
             attributes: &[
                 wgpu::VertexAttribute {
@@ -191,6 +194,7 @@ impl State {
         let game_info = GameInfo {
             hovered: 0,
             selected: 0,
+            legal_moves: [0; 256],
             _pad: [0; 2],
         };
 
@@ -238,7 +242,7 @@ impl State {
                 vertex: wgpu::VertexState {
                     module: &pieces_shader,
                     entry_point: Some("vs_main"),
-                    buffers: &[Vertex::desc(), ChessPiece::desc()],
+                    buffers: &[Vertex::desc(), Instance::desc()],
                     compilation_options: wgpu::PipelineCompilationOptions::default(),
                 },
                 fragment: Some(wgpu::FragmentState {
@@ -275,7 +279,7 @@ impl State {
         let board_render_pipeline_layout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("Render Pipeline Layout"),
-                bind_group_layouts: &[],
+                bind_group_layouts: &[&game_info_bind_group_layout],
                 push_constant_ranges: &[],
             });
 
@@ -320,16 +324,30 @@ impl State {
                 cache: None,
             });
 
-        let chess_pieces = (0..64)
-            .map(move |position| ChessPiece {
-                position,
-                piece: position / 8,
+        let board_state = logic::BoardState::from_fen(
+            "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+        )?;
+
+        let instances = board_state
+            .pieces
+            .iter()
+            .enumerate()
+            .filter_map(|(index, piece)| {
+                let piece = match piece {
+                    Some(p) => p,
+                    None => return None,
+                };
+
+                Some(Instance {
+                    position: index as u32,
+                    piece: piece.to_idx(),
+                })
             })
             .collect::<Vec<_>>();
 
         let instance_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Instance Buffer"),
-            contents: bytemuck::cast_slice(&chess_pieces),
+            contents: bytemuck::cast_slice(&instances),
             usage: wgpu::BufferUsages::VERTEX,
         });
 
@@ -365,7 +383,7 @@ impl State {
             piece_vb,
             board_vb,
             index_buffer,
-            instances: chess_pieces,
+            instances,
             instance_buffer,
             surface_configured: false,
             pieces_render_pipeline,
@@ -374,6 +392,7 @@ impl State {
             game_info_bind_group,
             game_info_buffer,
             game_info,
+            board_state,
             window,
         })
     }
@@ -431,6 +450,7 @@ impl State {
 
             // board
             render_pass.set_pipeline(&self.board_render_pipeline);
+            render_pass.set_bind_group(0, &self.game_info_bind_group, &[]);
             render_pass.set_vertex_buffer(0, self.board_vb.slice(..));
             render_pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
             render_pass.draw_indexed(0..6, 0, 0..1);
@@ -517,22 +537,105 @@ impl ApplicationHandler<State> for App {
                 device_id: _,
                 position,
             } => {
+                println!("hovered: {}", state.game_info.hovered);
                 let size = state.window.inner_size();
-                // do a reverse of this for x and y
-                //             let instance_position = vec3<f32>(
-                //     (f32(i32(instance.position) % 8 - 4) + 0.1) * 0.125,
-                //     (f32(i32(instance.position) / 8 - 4) + 0.1) * 0.125,
-                //     0.0,
-                // );
-                let x = ((position.x / size.width as f64 - 0.25) * 16.0) as i32;
-                let y = ((1.0 - position.y / size.height as f64 - 0.25) * 16.0) as i32;
+                let x = ((position.x / size.width as f64 - 0.25) * 16.0).floor() as i32;
+                let y = ((1.0 - position.y / size.height as f64 - 0.25) * 16.0).floor() as i32;
                 let hovered = if !(0..8).contains(&x) || !(0..8).contains(&y) {
                     0
                 } else {
-                    (y * 8 + x) as u32 + 1
+                    (y * 8 + x + 1) as u32
                 };
                 if hovered != state.game_info.hovered {
                     state.game_info.hovered = hovered;
+                    state.queue.write_buffer(
+                        &state.game_info_buffer,
+                        0,
+                        bytemuck::cast_slice(&[state.game_info]),
+                    );
+                    state.window.request_redraw();
+                }
+            }
+            WindowEvent::MouseInput {
+                device_id: _,
+                state: button_state,
+                button,
+            } => {
+                if button == MouseButton::Left && button_state == ElementState::Pressed {
+                    if state.game_info.selected == state.game_info.hovered {
+                        state.game_info.selected = 0;
+                    } else if state.game_info.selected != 0 && state.game_info.hovered != 0 {
+                        let from = state.game_info.selected as u8 - 1;
+                        let to = state.game_info.hovered as u8 - 1;
+                        let legal_moves = state.board_state.legal_moves(from);
+                        let mut legal_move_array = [0; 256];
+                        for &mv in legal_moves.iter() {
+                            legal_move_array[mv as usize * 4] = 1;
+                        }
+                        state.game_info.legal_moves = legal_move_array;
+                        if legal_moves.contains(&to) {
+                            state.board_state.make_move(from, to);
+                            state.instances = state
+                                .board_state
+                                .pieces
+                                .iter()
+                                .enumerate()
+                                .filter_map(|(index, piece)| {
+                                    let piece = match piece {
+                                        Some(p) => p,
+                                        None => return None,
+                                    };
+
+                                    Some(Instance {
+                                        position: index as u32,
+                                        piece: piece.to_idx(),
+                                    })
+                                })
+                                .collect::<Vec<_>>();
+
+                            state.instance_buffer = state.device.create_buffer_init(
+                                &wgpu::util::BufferInitDescriptor {
+                                    label: Some("Instance Buffer"),
+                                    contents: bytemuck::cast_slice(&state.instances),
+                                    usage: wgpu::BufferUsages::VERTEX,
+                                },
+                            );
+                            state.game_info.selected = 0;
+                            state.game_info.legal_moves = [0; 256];
+                        } else if let Some(piece) =
+                            &state.board_state.pieces[state.game_info.hovered as usize - 1]
+                            && piece.white == state.board_state.white_to_play
+                        {
+                            state.game_info.selected = state.game_info.hovered;
+
+                            let legal_moves = state
+                                .board_state
+                                .legal_moves(state.game_info.hovered as u8 - 1);
+                            let mut legal_move_array = [0; 256];
+                            for &mv in legal_moves.iter() {
+                                legal_move_array[mv as usize * 4] = 1;
+                            }
+                            state.game_info.legal_moves = legal_move_array;
+                        } else {
+                            state.game_info.selected = 0;
+                            state.game_info.legal_moves = [0; 256];
+                        }
+                    } else if state.game_info.hovered != 0
+                        && let Some(piece) =
+                            &state.board_state.pieces[state.game_info.hovered as usize - 1]
+                        && piece.white == state.board_state.white_to_play
+                    {
+                        state.game_info.selected = state.game_info.hovered;
+
+                        let legal_moves = state
+                            .board_state
+                            .legal_moves(state.game_info.hovered as u8 - 1);
+                        let mut legal_move_array = [0; 256];
+                        for &mv in legal_moves.iter() {
+                            legal_move_array[mv as usize * 4] = 1;
+                        }
+                        state.game_info.legal_moves = legal_move_array;
+                    }
                     state.queue.write_buffer(
                         &state.game_info_buffer,
                         0,
