@@ -537,7 +537,6 @@ impl ApplicationHandler<State> for App {
                 device_id: _,
                 position,
             } => {
-                println!("hovered: {}", state.game_info.hovered);
                 let size = state.window.inner_size();
                 let x = ((position.x / size.width as f64 - 0.25) * 16.0).floor() as i32;
                 let y = ((1.0 - position.y / size.height as f64 - 0.25) * 16.0).floor() as i32;

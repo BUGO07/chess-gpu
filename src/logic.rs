@@ -327,7 +327,20 @@ impl BoardState {
 
     pub fn legal_moves(&self, square: u8) -> Vec<u8> {
         let mut moves = Vec::new();
+        let king_square = self
+            .pieces
+            .iter()
+            .position(|p| matches!(p, Some(piece) if piece.kind == PieceKind::King && piece.white == self.white_to_play))
+            .unwrap() as u8;
         if let Some(piece) = &self.pieces[square as usize] {
+            let checked_squares = if self.white_to_play == piece.white {
+                self.checked_squares()
+            } else {
+                Vec::new()
+            };
+            if piece.kind != PieceKind::King && checked_squares.contains(&king_square) {
+                return moves;
+            }
             match piece.kind {
                 PieceKind::Pawn => {
                     let direction: i8 = if piece.white { 1 } else { -1 };
@@ -486,6 +499,12 @@ impl BoardState {
                         let new_file = file + df;
                         if (0..8).contains(&new_rank) && (0..8).contains(&new_file) {
                             let target_square = new_rank * 8 + new_file;
+
+                            if self.white_to_play == piece.white
+                                && checked_squares.contains(&(target_square as u8))
+                            {
+                                continue;
+                            }
                             if let Some(target_piece) = &self.pieces[target_square as usize] {
                                 if target_piece.white != piece.white {
                                     moves.push(target_square as u8);
@@ -502,7 +521,74 @@ impl BoardState {
     }
 
     pub fn make_move(&mut self, from: u8, to: u8) {
-        self.pieces[to as usize] = self.pieces[from as usize].take();
+        let piece = self.pieces[from as usize].take();
+        if let Some(piece) = &piece {
+            match piece.kind {
+                PieceKind::Pawn => {
+                    if let Some(ep_square) = self.en_passant_square
+                        && to == ep_square
+                    {
+                        let capture_square = if piece.white { to - 8 } else { to + 8 };
+                        self.pieces[capture_square as usize] = None;
+                    }
+                    self.en_passant_square = None;
+                    if (piece.white && from / 8 == 1 && to / 8 == 3)
+                        || (!piece.white && from / 8 == 6 && to / 8 == 4)
+                    {
+                        self.en_passant_square = Some((from + to) / 2);
+                    }
+                }
+                PieceKind::King => {
+                    if piece.white {
+                        self.white_can_oo = false;
+                        self.white_can_ooo = false;
+                    } else {
+                        self.black_can_oo = false;
+                        self.black_can_ooo = false;
+                    }
+                }
+                PieceKind::Rook => {
+                    if piece.white {
+                        if from == 0 {
+                            self.white_can_ooo = false;
+                        } else if from == 7 {
+                            self.white_can_oo = false;
+                        }
+                    } else if from == 56 {
+                        self.black_can_ooo = false;
+                    } else if from == 63 {
+                        self.black_can_oo = false;
+                    }
+                }
+                _ => {}
+            }
+        }
+        self.pieces[to as usize] = piece;
         self.white_to_play = !self.white_to_play;
+    }
+
+    pub fn checked_squares(&self) -> Vec<u8> {
+        let mut squares = Vec::new();
+        for (i, square) in self.pieces.iter().enumerate() {
+            if let Some(piece) = square
+                && piece.white != self.white_to_play
+            {
+                for mv in self.legal_moves(i as u8) {
+                    if piece.kind == PieceKind::Pawn {
+                        if piece.white {
+                            if i as u8 + 8 == mv || i as u8 + 16 == mv {
+                                continue;
+                            }
+                        } else if i as u8 - 8 == mv || i as u8 - 16 == mv {
+                            continue;
+                        }
+                    }
+                    if !squares.contains(&mv) {
+                        squares.push(mv);
+                    }
+                }
+            }
+        }
+        squares
     }
 }
