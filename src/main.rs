@@ -34,6 +34,7 @@ pub struct State {
     game_info: GameInfo,
     last_time: std::time::Instant,
     board_state: logic::BoardState,
+    holding_piece: bool,
     window: Arc<Window>,
 }
 
@@ -70,9 +71,10 @@ struct GameInfo {
 #[repr(C)]
 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
 struct Instance {
-    position: u32,
+    position: [f32; 3],
     piece: u32,
     white: u32,
+    index: u32,
 }
 
 impl Instance {
@@ -84,16 +86,21 @@ impl Instance {
                 wgpu::VertexAttribute {
                     offset: 0,
                     shader_location: 1,
-                    format: wgpu::VertexFormat::Uint32,
+                    format: wgpu::VertexFormat::Float32x3,
                 },
                 wgpu::VertexAttribute {
-                    offset: size_of::<u32>() as wgpu::BufferAddress,
+                    offset: 12,
                     shader_location: 2,
                     format: wgpu::VertexFormat::Uint32,
                 },
                 wgpu::VertexAttribute {
-                    offset: (size_of::<u32>() * 2) as wgpu::BufferAddress,
+                    offset: 16,
                     shader_location: 3,
+                    format: wgpu::VertexFormat::Uint32,
+                },
+                wgpu::VertexAttribute {
+                    offset: 20,
+                    shader_location: 4,
                     format: wgpu::VertexFormat::Uint32,
                 },
             ],
@@ -347,10 +354,17 @@ impl State {
                     None => return None,
                 };
 
+                let instance_position = [
+                    ((index as i32 % 8 - 4) as f32 + 0.1) * 0.125,
+                    ((index as i32 / 8 - 4) as f32 + 0.1) * 0.125,
+                    0.0,
+                ];
+
                 Some(Instance {
-                    position: index as u32,
+                    position: instance_position,
                     piece: piece.to_idx(),
                     white: piece.white as u32,
+                    index: index as u32,
                 })
             })
             .collect::<Vec<_>>();
@@ -358,7 +372,7 @@ impl State {
         let instance_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Instance Buffer"),
             contents: bytemuck::cast_slice(&instances),
-            usage: wgpu::BufferUsages::VERTEX,
+            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
         });
 
         let piece_vertices =
@@ -404,6 +418,7 @@ impl State {
             game_info,
             last_time: std::time::Instant::now(),
             board_state,
+            holding_piece: false,
             window,
         })
     }
@@ -568,7 +583,24 @@ impl ApplicationHandler<State> for App {
                 };
                 if hovered != state.game_info.hovered {
                     state.game_info.hovered = hovered;
-                    state.window.request_redraw();
+                }
+                if state.holding_piece && state.game_info.selected != 0 {
+                    let holding_piece = state
+                        .instances
+                        .iter_mut()
+                        .find(|x| x.index == state.game_info.selected - 1);
+                    if let Some(holding_piece) = holding_piece {
+                        holding_piece.position = [
+                            (position.x as f32 / size.width as f32) * 2.0 - 1.05,
+                            (1.0 - position.y as f32 / size.height as f32) * 2.0 - 1.05,
+                            0.0,
+                        ];
+                    }
+                    state.queue.write_buffer(
+                        &state.instance_buffer,
+                        0,
+                        bytemuck::cast_slice(&state.instances),
+                    );
                 }
             }
             WindowEvent::MouseInput {
@@ -576,51 +608,78 @@ impl ApplicationHandler<State> for App {
                 state: button_state,
                 button,
             } => {
-                if button == MouseButton::Left && button_state == ElementState::Pressed {
-                    if state.game_info.selected == state.game_info.hovered {
-                        state.game_info.selected = 0;
-                        state.game_info.legal_moves = [0; 256];
-                    } else if state.game_info.selected != 0 && state.game_info.hovered != 0 {
-                        let from = state.game_info.selected as u8 - 1;
-                        let to = state.game_info.hovered as u8 - 1;
-                        let legal_moves = state.board_state.legal_moves(from);
-                        let mut legal_move_array = [0; 256];
-                        for &mv in legal_moves.iter() {
-                            legal_move_array[mv as usize * 4] = 1;
-                        }
-                        state.game_info.legal_moves = legal_move_array;
-                        if legal_moves.contains(&to) {
-                            state.board_state.make_move(from, to);
-                            state.instances = state
-                                .board_state
-                                .pieces
-                                .iter()
-                                .enumerate()
-                                .filter_map(|(index, piece)| {
-                                    let piece = match piece {
-                                        Some(p) => p,
-                                        None => return None,
-                                    };
-
-                                    Some(Instance {
-                                        position: index as u32,
-                                        piece: piece.to_idx(),
-                                        white: piece.white as u32,
-                                    })
-                                })
-                                .collect::<Vec<_>>();
-
-                            state.instance_buffer = state.device.create_buffer_init(
-                                &wgpu::util::BufferInitDescriptor {
-                                    label: Some("Instance Buffer"),
-                                    contents: bytemuck::cast_slice(&state.instances),
-                                    usage: wgpu::BufferUsages::VERTEX,
-                                },
-                            );
+                if button == MouseButton::Left {
+                    if button_state == ElementState::Pressed {
+                        state.holding_piece = true;
+                        if state.game_info.selected == state.game_info.hovered {
                             state.game_info.selected = 0;
                             state.game_info.legal_moves = [0; 256];
-                        } else if let Some(piece) =
-                            &state.board_state.pieces[state.game_info.hovered as usize - 1]
+                        } else if state.game_info.selected != 0 && state.game_info.hovered != 0 {
+                            let from = state.game_info.selected as u8 - 1;
+                            let to = state.game_info.hovered as u8 - 1;
+                            let legal_moves = state.board_state.legal_moves(from);
+                            let mut legal_move_array = [0; 256];
+                            for &mv in legal_moves.iter() {
+                                legal_move_array[mv as usize * 4] = 1;
+                            }
+                            state.game_info.legal_moves = legal_move_array;
+                            if legal_moves.contains(&to) {
+                                state.board_state.make_move(from, to);
+                                state.instances = state
+                                    .board_state
+                                    .pieces
+                                    .iter()
+                                    .enumerate()
+                                    .filter_map(|(index, piece)| {
+                                        let piece = match piece {
+                                            Some(p) => p,
+                                            None => return None,
+                                        };
+
+                                        let instance_position = [
+                                            ((index as i32 % 8 - 4) as f32 + 0.1) * 0.125,
+                                            ((index as i32 / 8 - 4) as f32 + 0.1) * 0.125,
+                                            0.0,
+                                        ];
+
+                                        Some(Instance {
+                                            position: instance_position,
+                                            piece: piece.to_idx(),
+                                            white: piece.white as u32,
+                                            index: index as u32,
+                                        })
+                                    })
+                                    .collect::<Vec<_>>();
+
+                                state.queue.write_buffer(
+                                    &state.instance_buffer,
+                                    0,
+                                    bytemuck::cast_slice(&state.instances),
+                                );
+
+                                state.game_info.selected = 0;
+                                state.game_info.legal_moves = [0; 256];
+                            } else if let Some(piece) =
+                                &state.board_state.pieces[state.game_info.hovered as usize - 1]
+                                && piece.white == state.board_state.white_to_play
+                            {
+                                state.game_info.selected = state.game_info.hovered;
+
+                                let legal_moves = state
+                                    .board_state
+                                    .legal_moves(state.game_info.hovered as u8 - 1);
+                                let mut legal_move_array = [0; 256];
+                                for &mv in legal_moves.iter() {
+                                    legal_move_array[mv as usize * 4] = 1;
+                                }
+                                state.game_info.legal_moves = legal_move_array;
+                            } else {
+                                state.game_info.selected = 0;
+                                state.game_info.legal_moves = [0; 256];
+                            }
+                        } else if state.game_info.hovered != 0
+                            && let Some(piece) =
+                                &state.board_state.pieces[state.game_info.hovered as usize - 1]
                             && piece.white == state.board_state.white_to_play
                         {
                             state.game_info.selected = state.game_info.hovered;
@@ -633,27 +692,10 @@ impl ApplicationHandler<State> for App {
                                 legal_move_array[mv as usize * 4] = 1;
                             }
                             state.game_info.legal_moves = legal_move_array;
-                        } else {
-                            state.game_info.selected = 0;
-                            state.game_info.legal_moves = [0; 256];
                         }
-                    } else if state.game_info.hovered != 0
-                        && let Some(piece) =
-                            &state.board_state.pieces[state.game_info.hovered as usize - 1]
-                        && piece.white == state.board_state.white_to_play
-                    {
-                        state.game_info.selected = state.game_info.hovered;
-
-                        let legal_moves = state
-                            .board_state
-                            .legal_moves(state.game_info.hovered as u8 - 1);
-                        let mut legal_move_array = [0; 256];
-                        for &mv in legal_moves.iter() {
-                            legal_move_array[mv as usize * 4] = 1;
-                        }
-                        state.game_info.legal_moves = legal_move_array;
+                    } else {
+                        state.holding_piece = false;
                     }
-                    state.window.request_redraw();
                 }
             }
             _ => {}

@@ -3,9 +3,10 @@ struct VertexInput {
 };
 
 struct InstanceInput {
-    @location(1) position: u32,
+    @location(1) position: vec3<f32>,
     @location(2) piece: u32,
     @location(3) white: u32,
+    @location(4) idx: u32,
 };
 
 struct VertexOutput {
@@ -29,17 +30,10 @@ fn get_uv(index: u32, position: vec2<f32>) -> vec2<f32> {
 fn vs_main(vertex: VertexInput, instance: InstanceInput) -> VertexOutput {
     var out: VertexOutput;
 
-    let instance_position = vec3<f32>(
-        (f32(i32(instance.position) % 8 - 4) + 0.1) * 0.125,
-        (f32(i32(instance.position) / 8 - 4) + 0.1) * 0.125,
-        0.0,
-    );
-    out.clip_position = vec4<f32>(vertex.position + instance_position, 1.0);
-    out.local_position = instance_position;
+    out.clip_position = vec4<f32>(vertex.position + instance.position, 1.0);
+    out.local_position = instance.position;
     out.uv = get_uv(instance.piece, vertex.position.xy * 10.0);
-    let x = i32(instance_position.x * 8.0 - 0.1);
-    let y = i32(instance_position.y * 8.0 - 0.1);
-    out.idx = u32((y + 4) * 8 + (x + 5));
+    out.idx = instance.idx + 1u;
     out.white = instance.white;
 
     return out;
@@ -68,7 +62,7 @@ struct GameInfo {
 var<uniform> game_info: GameInfo;
 
 fn hsl_to_rgb(hsl: vec3<f32>) -> vec3<f32> {
-    let h = hsl.x; // normalize hue to 0-1
+    let h = hsl.x;
     let s = hsl.y;
     let l = hsl.z;
 
