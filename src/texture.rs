@@ -52,6 +52,49 @@ impl Texture {
         }
     }
 
+    pub fn atlas_from(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        files: Vec<&str>,
+        width: u32,
+        linear_rgb: bool,
+    ) -> anyhow::Result<Self> {
+        let mut images = Vec::new();
+        for file in files {
+            let path = std::path::Path::new("assets").join(file);
+            let bytes = std::fs::read(&path)
+                .map_err(|e| anyhow::anyhow!("Failed to read asset - {path:?}: {e}"))?;
+            let img = image::load_from_memory(&bytes)?;
+            images.push(img);
+        }
+
+        if images.is_empty() {
+            return Err(anyhow::anyhow!("No images provided for atlas"));
+        }
+
+        let (img_width, img_height) = images[0].dimensions();
+        let rows = (images.len() as u32).div_ceil(width);
+        let total_width = img_width * width;
+        let total_height = img_height * rows;
+
+        let mut atlas = image::RgbaImage::new(total_width, total_height);
+
+        for (i, img) in images.iter().enumerate() {
+            let x = (i as u32 % width) * img_width;
+            let y = (i as u32 / width) * img_height;
+            let sub_img = img.to_rgba8();
+            image::imageops::replace(&mut atlas, &sub_img, x as i64, y as i64);
+        }
+
+        Self::from_image(
+            device,
+            queue,
+            &image::DynamicImage::ImageRgba8(atlas),
+            Some("atlas"),
+            linear_rgb,
+        )
+    }
+
     pub fn from_assets(
         device: &wgpu::Device,
         queue: &wgpu::Queue,

@@ -151,7 +151,7 @@ impl State {
             format: surface_format,
             width: size.width,
             height: size.height,
-            present_mode: wgpu::PresentMode::AutoVsync,
+            present_mode: wgpu::PresentMode::AutoNoVsync,
             alpha_mode: wgpu::CompositeAlphaMode::Auto,
             view_formats: vec![],
             desired_maximum_frame_latency: 2,
@@ -190,7 +190,26 @@ impl State {
                 label: Some("texture_bind_group_layout"),
             });
 
-        let tex = texture::Texture::from_assets(&device, &queue, "atlas.png".into(), false)?;
+        let tex = texture::Texture::atlas_from(
+            &device,
+            &queue,
+            vec![
+                "pieces/wr.png",
+                "pieces/wn.png",
+                "pieces/wb.png",
+                "pieces/wq.png",
+                "pieces/wk.png",
+                "pieces/wp.png",
+                "pieces/br.png",
+                "pieces/bn.png",
+                "pieces/bb.png",
+                "pieces/bq.png",
+                "pieces/bk.png",
+                "pieces/bp.png",
+            ],
+            6,
+            false,
+        )?;
 
         let texture_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             layout: &texture_bind_group_layout,
@@ -356,8 +375,8 @@ impl State {
                 };
 
                 let instance_position = [
-                    ((index as i32 % 8 - 4) as f32 + 0.1) * 0.125,
-                    ((index as i32 / 8 - 4) as f32 + 0.1) * 0.125,
+                    ((index as i32 % 8 - 4) as f32) * 0.125,
+                    ((index as i32 / 8 - 4) as f32) * 0.125,
                     0.0,
                 ];
 
@@ -377,7 +396,7 @@ impl State {
         });
 
         let piece_vertices =
-            utils::Quad::from(Vec3::ZERO, Vec3::ONE * 0.1).map(|pos| Vertex { position: pos });
+            utils::Quad::from(Vec3::ZERO, Vec3::ONE / 8.2).map(|pos| Vertex { position: pos });
 
         let piece_vb = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Pieces Vertex Buffer"),
@@ -438,8 +457,8 @@ impl State {
                 };
 
                 let instance_position = [
-                    ((index as i32 % 8 - 4) as f32 + 0.1) * 0.125,
-                    ((index as i32 / 8 - 4) as f32 + 0.1) * 0.125,
+                    ((index as i32 % 8 - 4) as f32) * 0.125,
+                    ((index as i32 / 8 - 4) as f32) * 0.125,
                     0.0,
                 ];
 

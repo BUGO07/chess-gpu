@@ -32,7 +32,7 @@ fn vs_main(vertex: VertexInput, instance: InstanceInput) -> VertexOutput {
 
     out.clip_position = vec4<f32>(vertex.position + instance.position, 1.0);
     out.local_position = instance.position;
-    out.uv = get_uv(instance.piece, vertex.position.xy * 10.0);
+    out.uv = get_uv(instance.piece, vertex.position.xy * 8.2);
     out.idx = instance.idx + 1u;
     out.white = instance.white;
 
