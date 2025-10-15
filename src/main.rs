@@ -34,6 +34,7 @@ pub struct State {
     game_info: GameInfo,
     last_time: std::time::Instant,
     board_state: logic::BoardState,
+    mouse_down: bool,
     holding_piece: bool,
     window: Arc<Window>,
 }
@@ -418,9 +419,44 @@ impl State {
             game_info,
             last_time: std::time::Instant::now(),
             board_state,
+            mouse_down: false,
             holding_piece: false,
             window,
         })
+    }
+
+    pub fn update_instances(&mut self) {
+        self.instances = self
+            .board_state
+            .pieces
+            .iter()
+            .enumerate()
+            .filter_map(|(index, piece)| {
+                let piece = match piece {
+                    Some(p) => p,
+                    None => return None,
+                };
+
+                let instance_position = [
+                    ((index as i32 % 8 - 4) as f32 + 0.1) * 0.125,
+                    ((index as i32 / 8 - 4) as f32 + 0.1) * 0.125,
+                    0.0,
+                ];
+
+                Some(Instance {
+                    position: instance_position,
+                    piece: piece.to_idx(),
+                    white: piece.white as u32,
+                    index: index as u32,
+                })
+            })
+            .collect::<Vec<_>>();
+
+        self.queue.write_buffer(
+            &self.instance_buffer,
+            0,
+            bytemuck::cast_slice(&self.instances),
+        );
     }
 
     pub fn resize(&mut self, width: u32, height: u32) {
@@ -573,6 +609,7 @@ impl ApplicationHandler<State> for App {
                 device_id: _,
                 position,
             } => {
+                state.holding_piece = state.mouse_down && state.game_info.selected != 0;
                 let size = state.window.inner_size();
                 let x = ((position.x / size.width as f64 - 0.25) * 16.0).floor() as i32;
                 let y = ((1.0 - position.y / size.height as f64 - 0.25) * 16.0).floor() as i32;
@@ -584,7 +621,7 @@ impl ApplicationHandler<State> for App {
                 if hovered != state.game_info.hovered {
                     state.game_info.hovered = hovered;
                 }
-                if state.holding_piece && state.game_info.selected != 0 {
+                if state.holding_piece {
                     let holding_piece = state
                         .instances
                         .iter_mut()
@@ -610,7 +647,7 @@ impl ApplicationHandler<State> for App {
             } => {
                 if button == MouseButton::Left {
                     if button_state == ElementState::Pressed {
-                        state.holding_piece = true;
+                        state.mouse_down = true;
                         if state.game_info.selected == state.game_info.hovered {
                             state.game_info.selected = 0;
                             state.game_info.legal_moves = [0; 256];
@@ -625,37 +662,7 @@ impl ApplicationHandler<State> for App {
                             state.game_info.legal_moves = legal_move_array;
                             if legal_moves.contains(&to) {
                                 state.board_state.make_move(from, to);
-                                state.instances = state
-                                    .board_state
-                                    .pieces
-                                    .iter()
-                                    .enumerate()
-                                    .filter_map(|(index, piece)| {
-                                        let piece = match piece {
-                                            Some(p) => p,
-                                            None => return None,
-                                        };
-
-                                        let instance_position = [
-                                            ((index as i32 % 8 - 4) as f32 + 0.1) * 0.125,
-                                            ((index as i32 / 8 - 4) as f32 + 0.1) * 0.125,
-                                            0.0,
-                                        ];
-
-                                        Some(Instance {
-                                            position: instance_position,
-                                            piece: piece.to_idx(),
-                                            white: piece.white as u32,
-                                            index: index as u32,
-                                        })
-                                    })
-                                    .collect::<Vec<_>>();
-
-                                state.queue.write_buffer(
-                                    &state.instance_buffer,
-                                    0,
-                                    bytemuck::cast_slice(&state.instances),
-                                );
+                                state.update_instances();
 
                                 state.game_info.selected = 0;
                                 state.game_info.legal_moves = [0; 256];
@@ -694,6 +701,20 @@ impl ApplicationHandler<State> for App {
                             state.game_info.legal_moves = legal_move_array;
                         }
                     } else {
+                        if state.holding_piece && state.game_info.selected != 0 {
+                            let from = state.game_info.selected as u8 - 1;
+                            if state.game_info.hovered != 0 {
+                                let to = state.game_info.hovered as u8 - 1;
+                                if state.board_state.legal_moves(from).contains(&to) {
+                                    state.board_state.make_move(from, to);
+                                }
+                            }
+                            state.update_instances();
+                            state.game_info.selected = 0;
+                            state.game_info.legal_moves = [0; 256];
+                        }
+
+                        state.mouse_down = false;
                         state.holding_piece = false;
                     }
                 }
