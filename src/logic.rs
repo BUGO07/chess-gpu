@@ -67,7 +67,7 @@ impl Piece {
     }
 }
 
-#[derive(Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct BoardState {
     pub pieces: Vec<Option<Piece>>,
     pub white_to_play: bool,
@@ -338,9 +338,6 @@ impl BoardState {
             } else {
                 Vec::new()
             };
-            if piece.kind != PieceKind::King && checked_squares.contains(&king_square) {
-                return moves;
-            }
             match piece.kind {
                 PieceKind::Pawn => {
                     let direction: i8 = if piece.white { 1 } else { -1 };
@@ -515,6 +512,24 @@ impl BoardState {
                         }
                     }
                 }
+            }
+
+            if piece.kind != PieceKind::King
+                && piece.white == self.white_to_play
+                && checked_squares.contains(&king_square)
+            {
+                let mut new_moves = Vec::new();
+                for &mv in moves.iter() {
+                    let mut temp_board = self.clone();
+                    temp_board.make_move(square, mv);
+                    temp_board.white_to_play = !temp_board.white_to_play;
+                    if !temp_board.checked_squares().contains(&king_square)
+                        && !new_moves.contains(&mv)
+                    {
+                        new_moves.push(mv);
+                    }
+                }
+                return new_moves;
             }
         }
         moves
