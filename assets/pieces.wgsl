@@ -4,9 +4,7 @@ struct VertexInput {
 
 struct InstanceInput {
     @location(1) position: vec3<f32>,
-    @location(2) piece: u32,
-    @location(3) white: u32,
-    @location(4) idx: u32,
+    @location(2) data: u32,
 };
 
 struct VertexOutput {
@@ -32,9 +30,9 @@ fn vs_main(vertex: VertexInput, instance: InstanceInput) -> VertexOutput {
 
     out.clip_position = vec4<f32>(vertex.position + instance.position, 1.0);
     out.local_position = instance.position;
-    out.uv = get_uv(instance.piece, vertex.position.xy * 8.2);
-    out.idx = instance.idx + 1u;
-    out.white = instance.white;
+    out.uv = get_uv(instance_piece(instance.data), vertex.position.xy * 8.2);
+    out.idx = instance_index(instance.data) + 1u;
+    out.white = instance_white(instance.data);
 
     return out;
 }
@@ -45,17 +43,11 @@ var pieces_texture: texture_2d<f32>;
 @group(0) @binding(1)
 var pieces_sampler: sampler;
 
-struct U32Aligned {
-    @align(16)
-    value: u32,
-}
-
 struct GameInfo {
-    hovered: u32,
-    selected: u32,
     time: f32,
-    white_to_play: u32,
-    legal_moves: array<U32Aligned, 64>,
+    state: u32,
+    legal_moves_low: u32,
+    legal_moves_high: u32,
 };
 
 @group(1) @binding(0)
@@ -79,17 +71,41 @@ fn hsl_to_rgb(hsl: vec3<f32>) -> vec3<f32> {
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let texture = textureSample(pieces_texture, pieces_sampler, in.uv);
-    if game_info.selected == in.idx && game_info.hovered == in.idx {
+    if is_selected(in.idx) && is_hovered(in.idx) {
         return vec4<f32>(mix(texture.rgb, vec3<f32>(0.0, 0.4, 1.0), 0.5), texture.a);
-    } else if game_info.selected == in.idx {
+    } else if is_selected(in.idx) {
         return vec4<f32>(mix(texture.rgb, vec3<f32>(0.0, 0.0, 1.0), 0.5), texture.a);
-    } else if game_info.hovered == in.idx {
+    } else if is_hovered(in.idx) {
         return vec4<f32>(mix(texture.rgb, vec3<f32>(1.0, 1.0, 0.0), 0.5), texture.a);
     }
     let rgb = hsl_to_rgb(vec3<f32>(sin(game_info.time + length(in.local_position.xy)) * 0.5 + 0.5, 1.0, 0.5));
-    if in.white == game_info.white_to_play {
+    if in.white == white_to_play() {
         return vec4<f32>(mix(texture.rgb, rgb, 0.5), texture.a);
     } else {
         return texture;
     }
+}
+
+fn is_selected(idx: u32) -> bool {
+    return ((game_info.state >> 8u) & 0x7Fu) == idx;
+}
+
+fn is_hovered(idx: u32) -> bool {
+    return ((game_info.state >> 1u) & 0x7Fu) == idx;
+}
+
+fn white_to_play() -> u32 {
+    return game_info.state & 1u;
+}
+
+fn instance_white(data: u32) -> u32 {
+    return data & 1u;
+}
+
+fn instance_piece(data: u32) -> u32 {
+    return (data >> 1u) & 0xFu;
+}
+
+fn instance_index(data: u32) -> u32 {
+    return (data >> 5u) & 0x3Fu;
 }

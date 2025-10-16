@@ -17,17 +17,11 @@ fn vs_main(
     return out;
 }
 
-struct U32Aligned {
-    @align(16)
-    value: u32,
-}
-
 struct GameInfo {
-    hovered: u32,
-    selected: u32,
     time: f32,
-    white_to_play: u32,
-    legal_moves: array<U32Aligned, 64>,
+    state: u32,
+    legal_moves_low: u32,
+    legal_moves_high: u32,
 };
 
 @group(0) @binding(0)
@@ -55,11 +49,11 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
             color = vec4<f32>(0.93, 0.93, 0.93, 1.0);
         }
 
-        if game_info.legal_moves[y * 8 + x].value == 1u {
+        if is_legal_move(u32(y * 8 + x)) {
             return mix(color, vec4<f32>(0.20, 0.80, 0.20, 1.0), 0.7);
         }
 
-        if game_info.selected == u32(y * 8 + x) + 1u {
+        if is_selected(u32(y * 8 + x) + 1u) {
             return mix(color, vec4<f32>(0.80, 0.20, 0.80, 1.0), 0.7);
         }
 
@@ -67,4 +61,16 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     }
 
     return vec4<f32>(0.5, 0.5, 0.5, 1.0);
+}
+
+fn is_legal_move(idx: u32) -> bool {
+    if idx < 32u {
+        return (game_info.legal_moves_low & (1u << idx)) != 0u;
+    } else {
+        return (game_info.legal_moves_high & (1u << (idx - 32u))) != 0u;
+    }
+}
+
+fn is_selected(idx: u32) -> bool {
+    return ((game_info.state >> 8u) & 0x7Fu) == idx;
 }

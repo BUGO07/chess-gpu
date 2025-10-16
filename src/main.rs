@@ -62,20 +62,67 @@ impl Vertex {
 #[repr(C)]
 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
 struct GameInfo {
-    hovered: u32,
-    selected: u32,
     time: f32,
-    white_to_play: u32,
-    legal_moves: [u32; 256],
+    state: u32,
+    legal_moves_low: u32,
+    legal_moves_high: u32,
+}
+
+impl GameInfo {
+    fn set_legal_moves(&mut self, moves: &[u8]) {
+        self.clear_legal_moves();
+        for &mv in moves.iter() {
+            if mv < 32 {
+                self.legal_moves_low |= 1 << mv;
+            } else {
+                self.legal_moves_high |= 1 << (mv - 32);
+            }
+        }
+    }
+    fn clear_legal_moves(&mut self) {
+        self.legal_moves_low = 0;
+        self.legal_moves_high = 0;
+    }
+    fn set_white_to_play(&mut self, white_to_play: bool) {
+        self.state = (self.state & !0x1) | ((white_to_play as u32) & 0x1); // bit 0
+    }
+    fn set_hovered(&mut self, hovered: u32) {
+        self.state = (self.state & !(0x7F << 1)) | ((hovered & 0x7F) << 1); // bits 1-7
+    }
+    fn hovered(&self) -> u32 {
+        (self.state >> 1) & 0x7F
+    }
+    fn set_selected(&mut self, selected: u32) {
+        self.state = (self.state & !(0x7F << 8)) | ((selected & 0x7F) << 8); // bits 8-14
+    }
+    fn selected(&self) -> u32 {
+        (self.state >> 8) & 0x7F
+    }
 }
 
 #[repr(C)]
 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
 struct Instance {
     position: [f32; 3],
-    piece: u32,
-    white: u32,
-    index: u32,
+    data: u32, // bit 0 = white, bits 1-4 = piece, bits 5-10 = index
+}
+
+impl Instance {
+    fn new(position: [f32; 3], piece: u32, white: u32, index: u32) -> Self {
+        Self {
+            position,
+            data: (white & 0x1) | ((piece & 0xF) << 1) | ((index & 0x3F) << 5),
+        }
+    }
+    fn _white(&self) -> u32 {
+        self.data & 0x1
+    }
+    fn _piece(&self) -> u32 {
+        (self.data >> 1) & 0xF
+    }
+    fn index(&self) -> u32 {
+        (self.data >> 5) & 0x3F
+    }
 }
 
 impl Instance {
@@ -92,16 +139,6 @@ impl Instance {
                 wgpu::VertexAttribute {
                     offset: 12,
                     shader_location: 2,
-                    format: wgpu::VertexFormat::Uint32,
-                },
-                wgpu::VertexAttribute {
-                    offset: 16,
-                    shader_location: 3,
-                    format: wgpu::VertexFormat::Uint32,
-                },
-                wgpu::VertexAttribute {
-                    offset: 20,
-                    shader_location: 4,
                     format: wgpu::VertexFormat::Uint32,
                 },
             ],
@@ -227,11 +264,10 @@ impl State {
         });
 
         let game_info = GameInfo {
-            hovered: 0,
-            selected: 0,
             time: 0.0,
-            legal_moves: [0; 256],
-            white_to_play: 1,
+            state: 1,
+            legal_moves_low: 0,
+            legal_moves_high: 0,
         };
 
         let game_info_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -384,12 +420,12 @@ impl State {
                     0.0,
                 ];
 
-                Some(Instance {
-                    position: instance_position,
-                    piece: piece.to_idx(),
-                    white: piece.white as u32,
-                    index: index as u32,
-                })
+                Some(Instance::new(
+                    instance_position,
+                    piece.to_idx(),
+                    piece.white as u32,
+                    index as u32,
+                ))
             })
             .collect::<Vec<_>>();
 
@@ -466,12 +502,12 @@ impl State {
                     0.0,
                 ];
 
-                Some(Instance {
-                    position: instance_position,
-                    piece: piece.to_idx(),
-                    white: piece.white as u32,
-                    index: index as u32,
-                })
+                Some(Instance::new(
+                    instance_position,
+                    piece.to_idx(),
+                    piece.white as u32,
+                    index as u32,
+                ))
             })
             .collect::<Vec<_>>();
 
@@ -494,7 +530,8 @@ impl State {
     pub fn update(&mut self) {
         let now = std::time::Instant::now();
         self.game_info.time += now.duration_since(self.last_time).as_secs_f32();
-        self.game_info.white_to_play = self.board_state.white_to_play as u32;
+        self.game_info
+            .set_white_to_play(self.board_state.white_to_play);
         self.last_time = now;
         self.queue.write_buffer(
             &self.game_info_buffer,
@@ -623,16 +660,18 @@ impl ApplicationHandler<State> for App {
                         ..
                     },
                 ..
-            } => {
-                if let (KeyCode::Escape, true) = (code, key_state.is_pressed()) {
-                    event_loop.exit()
+            } => match (code, key_state.is_pressed()) {
+                (KeyCode::Escape, true) => event_loop.exit(),
+                (KeyCode::Space, true) => {
+                    println!("{}", state.board_state.to_fen());
                 }
-            }
+                _ => {}
+            },
             WindowEvent::CursorMoved {
                 device_id: _,
                 position,
             } => {
-                state.holding_piece = state.mouse_down && state.game_info.selected != 0;
+                state.holding_piece = state.mouse_down && state.game_info.selected() != 0;
                 let size = state.window.inner_size();
                 let x = ((position.x / size.width as f64 - 0.25) * 16.0).floor() as i32;
                 let y = ((1.0 - position.y / size.height as f64 - 0.25) * 16.0).floor() as i32;
@@ -641,14 +680,14 @@ impl ApplicationHandler<State> for App {
                 } else {
                     (y * 8 + x + 1) as u32
                 };
-                if hovered != state.game_info.hovered {
-                    state.game_info.hovered = hovered;
+                if hovered != state.game_info.hovered() {
+                    state.game_info.set_hovered(hovered);
                 }
                 if state.holding_piece {
                     let holding_piece = state
                         .instances
                         .iter_mut()
-                        .find(|x| x.index == state.game_info.selected - 1);
+                        .find(|x| x.index() == state.game_info.selected() - 1);
                     if let Some(holding_piece) = holding_piece {
                         holding_piece.position = [
                             (position.x as f32 / size.width as f32) * 2.0 - 1.05,
@@ -671,70 +710,59 @@ impl ApplicationHandler<State> for App {
                 if button == MouseButton::Left {
                     if button_state == ElementState::Pressed {
                         state.mouse_down = true;
-                        if state.game_info.selected == state.game_info.hovered {
-                            state.game_info.selected = 0;
-                            state.game_info.legal_moves = [0; 256];
-                        } else if state.game_info.selected != 0 && state.game_info.hovered != 0 {
-                            let from = state.game_info.selected as u8 - 1;
-                            let to = state.game_info.hovered as u8 - 1;
+                        if state.game_info.selected() == state.game_info.hovered() {
+                            state.game_info.set_selected(0);
+                            state.game_info.clear_legal_moves();
+                        } else if state.game_info.selected() != 0 && state.game_info.hovered() != 0
+                        {
+                            let from = state.game_info.selected() as u8 - 1;
+                            let to = state.game_info.hovered() as u8 - 1;
                             let legal_moves = state.board_state.legal_moves(from);
-                            let mut legal_move_array = [0; 256];
-                            for &mv in legal_moves.iter() {
-                                legal_move_array[mv as usize * 4] = 1;
-                            }
-                            state.game_info.legal_moves = legal_move_array;
+                            state.game_info.set_legal_moves(&legal_moves);
                             if legal_moves.contains(&to) {
                                 state.board_state.make_move(from, to);
                                 state.update_instances();
 
-                                state.game_info.selected = 0;
-                                state.game_info.legal_moves = [0; 256];
+                                state.game_info.set_selected(0);
+                                state.game_info.clear_legal_moves();
                             } else if let Some(piece) =
-                                &state.board_state.pieces[state.game_info.hovered as usize - 1]
+                                &state.board_state.pieces[state.game_info.hovered() as usize - 1]
                                 && piece.white == state.board_state.white_to_play
                             {
-                                state.game_info.selected = state.game_info.hovered;
+                                state.game_info.set_selected(state.game_info.hovered());
 
                                 let legal_moves = state
                                     .board_state
-                                    .legal_moves(state.game_info.hovered as u8 - 1);
-                                let mut legal_move_array = [0; 256];
-                                for &mv in legal_moves.iter() {
-                                    legal_move_array[mv as usize * 4] = 1;
-                                }
-                                state.game_info.legal_moves = legal_move_array;
+                                    .legal_moves(state.game_info.hovered() as u8 - 1);
+                                state.game_info.set_legal_moves(&legal_moves);
                             } else {
-                                state.game_info.selected = 0;
-                                state.game_info.legal_moves = [0; 256];
+                                state.game_info.set_selected(0);
+                                state.game_info.clear_legal_moves();
                             }
-                        } else if state.game_info.hovered != 0
+                        } else if state.game_info.hovered() != 0
                             && let Some(piece) =
-                                &state.board_state.pieces[state.game_info.hovered as usize - 1]
+                                &state.board_state.pieces[state.game_info.hovered() as usize - 1]
                             && piece.white == state.board_state.white_to_play
                         {
-                            state.game_info.selected = state.game_info.hovered;
+                            state.game_info.set_selected(state.game_info.hovered());
 
                             let legal_moves = state
                                 .board_state
-                                .legal_moves(state.game_info.hovered as u8 - 1);
-                            let mut legal_move_array = [0; 256];
-                            for &mv in legal_moves.iter() {
-                                legal_move_array[mv as usize * 4] = 1;
-                            }
-                            state.game_info.legal_moves = legal_move_array;
+                                .legal_moves(state.game_info.hovered() as u8 - 1);
+                            state.game_info.set_legal_moves(&legal_moves);
                         }
                     } else {
-                        if state.holding_piece && state.game_info.selected != 0 {
-                            let from = state.game_info.selected as u8 - 1;
-                            if state.game_info.hovered != 0 {
-                                let to = state.game_info.hovered as u8 - 1;
+                        if state.holding_piece && state.game_info.selected() != 0 {
+                            let from = state.game_info.selected() as u8 - 1;
+                            if state.game_info.hovered() != 0 {
+                                let to = state.game_info.hovered() as u8 - 1;
                                 if state.board_state.legal_moves(from).contains(&to) {
                                     state.board_state.make_move(from, to);
                                 }
                             }
                             state.update_instances();
-                            state.game_info.selected = 0;
-                            state.game_info.legal_moves = [0; 256];
+                            state.game_info.set_selected(0);
+                            state.game_info.clear_legal_moves();
                         }
 
                         state.mouse_down = false;
