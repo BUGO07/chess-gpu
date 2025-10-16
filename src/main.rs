@@ -360,9 +360,13 @@ impl State {
                 cache: None,
             });
 
-        let board_state = logic::BoardState::from_fen(
-            "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
-        )?;
+        let args = std::env::args().collect::<Vec<_>>();
+        let fen = if args.len() > 1 {
+            &args[1..].join(" ")
+        } else {
+            logic::STARTING_FEN
+        };
+        let board_state = logic::BoardState::from_fen(fen)?;
 
         let instances = board_state
             .pieces

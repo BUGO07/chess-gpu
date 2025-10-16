@@ -11,3 +11,5 @@ Make use of compute shaders for the game logic.
 Make sure you have rust installed on your machine.
 
 Then just `cargo run`
+
+If you want to provide a custom FEN to start the game with, do `cargo run -- <FEN>`

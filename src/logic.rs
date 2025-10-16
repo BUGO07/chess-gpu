@@ -1,3 +1,5 @@
+pub const STARTING_FEN: &str = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum PieceKind {
     Pawn,
@@ -511,6 +513,49 @@ impl BoardState {
                             }
                         }
                     }
+                    if !checked_squares.contains(&square) {
+                        if piece.white {
+                            if self.white_can_ooo
+                                && self.pieces[1].is_none()
+                                && self.pieces[2].is_none()
+                                && self.pieces[3].is_none()
+                                && !checked_squares.contains(&2)
+                                && !checked_squares.contains(&3)
+                                && !moves.contains(&2)
+                            {
+                                moves.push(2);
+                            }
+                            if self.white_can_oo
+                                && self.pieces[5].is_none()
+                                && self.pieces[6].is_none()
+                                && !checked_squares.contains(&5)
+                                && !checked_squares.contains(&6)
+                                && !moves.contains(&6)
+                            {
+                                moves.push(6);
+                            }
+                        } else {
+                            if self.black_can_ooo
+                                && self.pieces[57].is_none()
+                                && self.pieces[58].is_none()
+                                && self.pieces[59].is_none()
+                                && !checked_squares.contains(&58)
+                                && !checked_squares.contains(&59)
+                                && !moves.contains(&58)
+                            {
+                                moves.push(58);
+                            }
+                            if self.black_can_oo
+                                && self.pieces[61].is_none()
+                                && self.pieces[62].is_none()
+                                && !checked_squares.contains(&61)
+                                && !checked_squares.contains(&62)
+                                && !moves.contains(&62)
+                            {
+                                moves.push(62);
+                            }
+                        }
+                    }
                 }
             }
 
@@ -558,9 +603,21 @@ impl BoardState {
                     if piece.white {
                         self.white_can_oo = false;
                         self.white_can_ooo = false;
+                        // move rook
+                        if from == 4 && to == 2 {
+                            self.pieces[3] = self.pieces[0].take();
+                        } else if from == 4 && to == 6 {
+                            self.pieces[5] = self.pieces[7].take();
+                        }
                     } else {
                         self.black_can_oo = false;
                         self.black_can_ooo = false;
+                        // move rook
+                        if from == 60 && to == 58 {
+                            self.pieces[59] = self.pieces[56].take();
+                        } else if from == 60 && to == 62 {
+                            self.pieces[61] = self.pieces[63].take();
+                        }
                     }
                 }
                 PieceKind::Rook => {
