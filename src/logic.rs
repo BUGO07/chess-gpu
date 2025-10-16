@@ -536,6 +536,7 @@ impl BoardState {
     }
 
     pub fn make_move(&mut self, from: u8, to: u8) {
+        // TODO cancel en passant
         let piece = self.pieces[from as usize].take();
         if let Some(piece) = &piece {
             match piece.kind {
@@ -580,6 +581,13 @@ impl BoardState {
         }
         self.pieces[to as usize] = piece;
         self.white_to_play = !self.white_to_play;
+        if self.is_checkmate() {
+            println!(
+                "checkmate {} wins",
+                if self.white_to_play { "black" } else { "white" }
+            );
+            std::process::exit(0); // TODO make game over menu
+        }
     }
 
     pub fn checked_squares(&self) -> Vec<u8> {
@@ -605,5 +613,25 @@ impl BoardState {
             }
         }
         squares
+    }
+
+    pub fn is_checkmate(&self) -> bool {
+        let king_square = self
+            .pieces
+            .iter()
+            .position(|p| matches!(p, Some(piece) if piece.kind == PieceKind::King && piece.white == self.white_to_play))
+            .unwrap() as u8;
+        if !self.checked_squares().contains(&king_square) {
+            return false;
+        }
+        for (i, square) in self.pieces.iter().enumerate() {
+            if let Some(piece) = square
+                && piece.white == self.white_to_play
+                && !self.legal_moves(i as u8).is_empty()
+            {
+                return false;
+            }
+        }
+        true
     }
 }
