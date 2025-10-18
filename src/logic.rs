@@ -581,7 +581,6 @@ impl BoardState {
     }
 
     pub fn make_move(&mut self, from: u8, to: u8) {
-        // TODO cancel en passant
         let piece = self.pieces[from as usize].take();
         if let Some(piece) = &piece {
             match piece.kind {
@@ -634,6 +633,10 @@ impl BoardState {
                     }
                 }
                 _ => {}
+            }
+
+            if !matches!(piece.kind, PieceKind::Pawn) {
+                self.en_passant_square = None;
             }
         }
         self.pieces[to as usize] = piece;
