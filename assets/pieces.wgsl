@@ -72,11 +72,23 @@ fn hsl_to_rgb(hsl: vec3<f32>) -> vec3<f32> {
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let texture = textureSample(pieces_texture, pieces_sampler, in.uv);
     if is_selected(in.idx) && is_hovered(in.idx) {
-        return vec4<f32>(mix(texture.rgb, vec3<f32>(0.0, 0.4, 1.0), 0.5), texture.a);
+        if length(texture - textureSample(pieces_texture, pieces_sampler, in.uv - 0.002)) > 0.1 {
+            return vec4<f32>(mix(texture.rgb, vec3<f32>(0.0, 0.0, 0.0), 0.5), texture.a);
+        } else {
+            return texture;
+        }
     } else if is_selected(in.idx) {
         return vec4<f32>(mix(texture.rgb, vec3<f32>(0.0, 0.0, 1.0), 0.5), texture.a);
     } else if is_hovered(in.idx) {
-        return vec4<f32>(mix(texture.rgb, vec3<f32>(1.0, 1.0, 0.0), 0.5), texture.a);
+        if length(texture.rgb - textureSample(pieces_texture, pieces_sampler, in.uv - 0.002).rgb) > 0.1 {
+            if in.white == 1u {
+                return vec4<f32>(1.0, 1.0, 1.0, 1.0);
+            } else {
+                return vec4<f32>(0.0, 0.0, 0.0, 1.0);
+            }
+        } else {
+            return vec4<f32>((1.0 - texture.rgb) * 0.7, texture.a);
+        }
     }
     let rgb = hsl_to_rgb(vec3<f32>(sin(game_info.time + length(in.local_position.xy)) * 0.5 + 0.5, 1.0, 0.5));
     if in.white == white_to_play() {

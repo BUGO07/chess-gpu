@@ -582,24 +582,33 @@ impl BoardState {
 
     pub fn make_move(&mut self, from: u8, to: u8) {
         let piece = self.pieces[from as usize].take();
-        if let Some(piece) = &piece {
-            match piece.kind {
+        if let Some(pc) = &piece {
+            match pc.kind {
                 PieceKind::Pawn => {
                     if let Some(ep_square) = self.en_passant_square
                         && to == ep_square
                     {
-                        let capture_square = if piece.white { to - 8 } else { to + 8 };
+                        let capture_square = if pc.white { to - 8 } else { to + 8 };
                         self.pieces[capture_square as usize] = None;
                     }
                     self.en_passant_square = None;
-                    if (piece.white && from / 8 == 1 && to / 8 == 3)
-                        || (!piece.white && from / 8 == 6 && to / 8 == 4)
+                    if (pc.white && from / 8 == 1 && to / 8 == 3)
+                        || (!pc.white && from / 8 == 6 && to / 8 == 4)
                     {
                         self.en_passant_square = Some((from + to) / 2);
                     }
+                    if (to / 8 == 7 && pc.white) || (to / 8 == 0 && !pc.white) {
+                        self.pieces[to as usize] = Some(Piece {
+                            kind: PieceKind::Queen, // TODO  make selectable
+                            white: pc.white,
+                        });
+                        self.white_to_play = !self.white_to_play;
+                    } else {
+                        self.pieces[to as usize] = piece.clone();
+                    }
                 }
                 PieceKind::King => {
-                    if piece.white {
+                    if pc.white {
                         self.white_can_oo = false;
                         self.white_can_ooo = false;
                         // move rook
@@ -620,7 +629,7 @@ impl BoardState {
                     }
                 }
                 PieceKind::Rook => {
-                    if piece.white {
+                    if pc.white {
                         if from == 0 {
                             self.white_can_ooo = false;
                         } else if from == 7 {
@@ -635,19 +644,27 @@ impl BoardState {
                 _ => {}
             }
 
-            if !matches!(piece.kind, PieceKind::Pawn) {
+            if !matches!(pc.kind, PieceKind::Pawn) {
                 self.en_passant_square = None;
+                self.pieces[to as usize] = piece;
             }
         }
-        self.pieces[to as usize] = piece;
-        self.white_to_play = !self.white_to_play;
-        if self.is_checkmate() {
-            println!(
-                "checkmate {} wins",
-                if self.white_to_play { "black" } else { "white" }
-            );
-            std::process::exit(0); // TODO make game over menu
+        // TODO make game over menu
+        match self.is_game_over() {
+            1 => {
+                println!(
+                    "checkmate {} wins",
+                    if self.white_to_play { "white" } else { "black" }
+                );
+                std::process::exit(0);
+            }
+            2 => {
+                println!("stalemate");
+                std::process::exit(0);
+            }
+            _ => {}
         }
+        self.white_to_play = !self.white_to_play;
     }
 
     pub fn checked_squares(&self) -> Vec<u8> {
@@ -675,23 +692,25 @@ impl BoardState {
         squares
     }
 
-    pub fn is_checkmate(&self) -> bool {
+    pub fn is_game_over(&self) -> u32 {
         let king_square = self
             .pieces
             .iter()
             .position(|p| matches!(p, Some(piece) if piece.kind == PieceKind::King && piece.white == self.white_to_play))
             .unwrap() as u8;
-        if !self.checked_squares().contains(&king_square) {
-            return false;
-        }
         for (i, square) in self.pieces.iter().enumerate() {
             if let Some(piece) = square
                 && piece.white == self.white_to_play
                 && !self.legal_moves(i as u8).is_empty()
             {
-                return false;
+                return 0;
             }
         }
-        true
+
+        if self.checked_squares().contains(&king_square) {
+            1
+        } else {
+            2
+        }
     }
 }
