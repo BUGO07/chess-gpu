@@ -11,6 +11,7 @@ use winit::{
     window::Window,
 };
 
+pub mod fen;
 pub mod logic;
 pub mod texture;
 pub mod utils;
@@ -22,13 +23,18 @@ pub struct State {
     config: wgpu::SurfaceConfiguration,
     piece_vb: wgpu::Buffer,
     board_vb: wgpu::Buffer,
+    text_vb: wgpu::Buffer,
     index_buffer: wgpu::Buffer,
-    instances: Vec<Instance>,
-    instance_buffer: wgpu::Buffer,
+    piece_instances: Vec<Instance>,
+    text_instances: Vec<Instance>,
+    piece_instance_buffer: wgpu::Buffer,
+    text_instance_buffer: wgpu::Buffer,
     surface_configured: bool,
     pieces_render_pipeline: wgpu::RenderPipeline,
     board_render_pipeline: wgpu::RenderPipeline,
-    texture_bind_group: wgpu::BindGroup,
+    text_render_pipeline: wgpu::RenderPipeline,
+    pieces_texture_bind_group: wgpu::BindGroup,
+    text_texture_bind_group: wgpu::BindGroup,
     game_info_bind_group: wgpu::BindGroup,
     game_info_buffer: wgpu::Buffer,
     game_info: GameInfo,
@@ -97,6 +103,10 @@ impl GameInfo {
     }
     fn selected(&self) -> u32 {
         (self.state >> 8) & 0x7F
+    }
+    fn set_game_over(&mut self, game_over: u32) {
+        // bits 15-16 (00 = ongoing, 01 = white wins, 10 = black wins, 11 = draw)
+        self.state = (self.state & !(0x3 << 15)) | ((game_over & 0x3) << 15);
     }
 }
 
@@ -199,6 +209,11 @@ impl State {
             source: wgpu::ShaderSource::Wgsl(std::fs::read_to_string("assets/pieces.wgsl")?.into()),
         });
 
+        let text_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("Shader"),
+            source: wgpu::ShaderSource::Wgsl(std::fs::read_to_string("assets/text.wgsl")?.into()),
+        });
+
         let board_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("Shader"),
             source: wgpu::ShaderSource::Wgsl(std::fs::read_to_string("assets/board.wgsl")?.into()),
@@ -227,7 +242,7 @@ impl State {
                 label: Some("texture_bind_group_layout"),
             });
 
-        let tex = texture::Texture::atlas_from(
+        let pieces_texture = texture::Texture::atlas_from(
             &device,
             &queue,
             vec![
@@ -248,16 +263,47 @@ impl State {
             false,
         )?;
 
-        let texture_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        let text_texture =
+            texture::Texture::from_assets(&device, &queue, "minogram_6x10.png".into(), false)?;
+
+        let pieces_texture_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             layout: &texture_bind_group_layout,
             entries: &[
                 wgpu::BindGroupEntry {
                     binding: 0,
-                    resource: wgpu::BindingResource::TextureView(&tex.view),
+                    resource: wgpu::BindingResource::TextureView(&pieces_texture.view),
                 },
                 wgpu::BindGroupEntry {
                     binding: 1,
-                    resource: wgpu::BindingResource::Sampler(&tex.sampler),
+                    resource: wgpu::BindingResource::Sampler(&pieces_texture.sampler),
+                },
+            ],
+            label: None,
+        });
+
+        let text_texture_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            layout: &texture_bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&text_texture.view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(&device.create_sampler(
+                        &wgpu::SamplerDescriptor {
+                            address_mode_u: wgpu::AddressMode::ClampToEdge,
+                            address_mode_v: wgpu::AddressMode::ClampToEdge,
+                            address_mode_w: wgpu::AddressMode::ClampToEdge,
+                            mag_filter: wgpu::FilterMode::Nearest,
+                            min_filter: wgpu::FilterMode::Nearest,
+                            mipmap_filter: wgpu::FilterMode::Nearest,
+                            compare: None,
+                            lod_min_clamp: 0.0,
+                            lod_max_clamp: 100.0,
+                            ..Default::default()
+                        },
+                    )),
                 },
             ],
             label: None,
@@ -348,6 +394,53 @@ impl State {
                 cache: None,
             });
 
+        let text_render_pipeline_layout =
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("Render Pipeline Layout"),
+                bind_group_layouts: &[&texture_bind_group_layout],
+                push_constant_ranges: &[],
+            });
+
+        let text_render_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("Render Pipeline"),
+            layout: Some(&text_render_pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &text_shader,
+                entry_point: Some("vs_main"),
+                buffers: &[Vertex::desc(), Instance::desc()],
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &text_shader,
+                entry_point: Some("fs_main"),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: config.format,
+                    blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+            }),
+
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                strip_index_format: None,
+                front_face: wgpu::FrontFace::Ccw,
+                cull_mode: Some(wgpu::Face::Back),
+                polygon_mode: wgpu::PolygonMode::Fill,
+                unclipped_depth: false,
+                conservative: false,
+            },
+
+            depth_stencil: None,
+            multisample: wgpu::MultisampleState {
+                count: 1,
+                mask: !0,
+                alpha_to_coverage_enabled: false,
+            },
+            multiview: None,
+            cache: None,
+        });
+
         let board_render_pipeline_layout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("Render Pipeline Layout"),
@@ -404,7 +497,7 @@ impl State {
         };
         let board_state = logic::BoardState::from_fen(fen)?;
 
-        let instances = board_state
+        let piece_instances = board_state
             .pieces
             .iter()
             .enumerate()
@@ -429,9 +522,26 @@ impl State {
             })
             .collect::<Vec<_>>();
 
-        let instance_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        let piece_instance_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Instance Buffer"),
-            contents: bytemuck::cast_slice(&instances),
+            contents: bytemuck::cast_slice(&piece_instances),
+            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+        });
+
+        let text = "GAMEOVER";
+        let mut text_instances = Vec::new();
+
+        const CHARACTERS: &str = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+-=()[]{}<>/*:#%!?.,'\"@&$";
+        for (i, c) in text.chars().enumerate() {
+            text_instances.push(Instance {
+                position: [-(text.len() as f32) * 0.05 + i as f32 * 0.1, -0.05, 0.0],
+                data: CHARACTERS.find(c).unwrap() as u32,
+            });
+        }
+
+        let text_instance_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Instance Buffer"),
+            contents: bytemuck::cast_slice(&text_instances),
             usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
         });
 
@@ -453,6 +563,15 @@ impl State {
             usage: wgpu::BufferUsages::VERTEX,
         });
 
+        let text_vertices =
+            utils::Quad::from(Vec3::ZERO, Vec3::ONE * 0.1).map(|pos| Vertex { position: pos });
+
+        let text_vb = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Text Vertex Buffer"),
+            contents: bytemuck::cast_slice(&text_vertices),
+            usage: wgpu::BufferUsages::VERTEX,
+        });
+
         let index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Index Buffer"),
             contents: bytemuck::cast_slice(&utils::Quad::generate_indices(4)),
@@ -466,13 +585,18 @@ impl State {
             config,
             piece_vb,
             board_vb,
+            text_vb,
             index_buffer,
-            instances,
-            instance_buffer,
+            piece_instances,
+            piece_instance_buffer,
+            text_instances,
+            text_instance_buffer,
             surface_configured: false,
             pieces_render_pipeline,
             board_render_pipeline,
-            texture_bind_group,
+            text_render_pipeline,
+            pieces_texture_bind_group,
+            text_texture_bind_group,
             game_info_bind_group,
             game_info_buffer,
             game_info,
@@ -485,7 +609,7 @@ impl State {
     }
 
     pub fn update_instances(&mut self) {
-        self.instances = self
+        self.piece_instances = self
             .board_state
             .pieces
             .iter()
@@ -512,9 +636,9 @@ impl State {
             .collect::<Vec<_>>();
 
         self.queue.write_buffer(
-            &self.instance_buffer,
+            &self.piece_instance_buffer,
             0,
-            bytemuck::cast_slice(&self.instances),
+            bytemuck::cast_slice(&self.piece_instances),
         );
     }
 
@@ -532,6 +656,9 @@ impl State {
         self.game_info.time += now.duration_since(self.last_time).as_secs_f32();
         self.game_info
             .set_white_to_play(self.board_state.white_to_play);
+        self.game_info
+            .set_game_over(self.board_state.game_over as u32);
+
         self.last_time = now;
         self.queue.write_buffer(
             &self.game_info_buffer,
@@ -589,12 +716,22 @@ impl State {
 
             // pieces
             render_pass.set_pipeline(&self.pieces_render_pipeline);
-            render_pass.set_bind_group(0, &self.texture_bind_group, &[]);
+            render_pass.set_bind_group(0, &self.pieces_texture_bind_group, &[]);
             render_pass.set_bind_group(1, &self.game_info_bind_group, &[]);
             render_pass.set_vertex_buffer(0, self.piece_vb.slice(..));
-            render_pass.set_vertex_buffer(1, self.instance_buffer.slice(..));
+            render_pass.set_vertex_buffer(1, self.piece_instance_buffer.slice(..));
             render_pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
-            render_pass.draw_indexed(0..6, 0, 0..self.instances.len() as u32);
+            render_pass.draw_indexed(0..6, 0, 0..self.piece_instances.len() as u32);
+
+            if self.board_state.game_over != 0 {
+                render_pass.set_pipeline(&self.text_render_pipeline);
+                render_pass.set_bind_group(0, &self.text_texture_bind_group, &[]);
+                render_pass.set_vertex_buffer(0, self.text_vb.slice(..));
+                render_pass.set_vertex_buffer(1, self.text_instance_buffer.slice(..));
+                render_pass
+                    .set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+                render_pass.draw_indexed(0..6, 0, 0..self.text_instances.len() as u32);
+            }
         }
 
         self.queue.submit(std::iter::once(encoder.finish()));
@@ -685,7 +822,7 @@ impl ApplicationHandler<State> for App {
                 }
                 if state.holding_piece {
                     let holding_piece = state
-                        .instances
+                        .piece_instances
                         .iter_mut()
                         .find(|x| x.index() == state.game_info.selected() - 1);
                     if let Some(holding_piece) = holding_piece {
@@ -696,9 +833,9 @@ impl ApplicationHandler<State> for App {
                         ];
                     }
                     state.queue.write_buffer(
-                        &state.instance_buffer,
+                        &state.piece_instance_buffer,
                         0,
-                        bytemuck::cast_slice(&state.instances),
+                        bytemuck::cast_slice(&state.piece_instances),
                     );
                 }
             }
