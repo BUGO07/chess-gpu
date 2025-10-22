@@ -77,21 +77,23 @@ pub struct BoardState {
     pub white_can_ooo: bool,
     pub black_can_oo: bool,
     pub black_can_ooo: bool,
-    pub en_passant_square: Option<u8>,
-    pub halfmove_clock: u64,
-    pub fullmove_number: u64,
+    pub en_passant_square: Option<u32>,
+    pub halfmove_clock: u32,
+    pub fullmove_number: u32,
     pub game_over: u32, // 0 = ongoing, 1 = white wins, 2 = black wins, 3 = draw
 }
 
 impl BoardState {
-    pub fn legal_moves(&self, square: u8) -> Vec<u8> {
+    pub fn legal_moves(&self, square: u32) -> Vec<u32> {
         let mut moves = Vec::new();
         let Some(king_square) = self
             .pieces
             .iter()
             .position(|p| matches!(p, Some(piece) if piece.kind == PieceKind::King && piece.white == self.white_to_play))
-            else {return moves};
-        let king_square = king_square as u8;
+        else {
+            return moves
+        };
+        let king_square = king_square as u32;
         if let Some(piece) = &self.pieces[square as usize] {
             let checked_squares = if self.white_to_play == piece.white {
                 self.checked_squares()
@@ -101,7 +103,7 @@ impl BoardState {
             match piece.kind {
                 PieceKind::Pawn => {
                     let direction: i8 = if piece.white { 1 } else { -1 };
-                    let start_rank: u8 = if piece.white { 1 } else { 6 };
+                    let start_rank: u32 = if piece.white { 1 } else { 6 };
                     let rank = square / 8;
                     let file = square % 8;
 
@@ -109,7 +111,7 @@ impl BoardState {
                     if (0..64).contains(&forward_square)
                         && self.pieces[forward_square as usize].is_none()
                     {
-                        moves.push(forward_square as u8);
+                        moves.push(forward_square as u32);
 
                         if rank == start_rank {
                             let double_forward_square =
@@ -117,7 +119,7 @@ impl BoardState {
                             if (0..64).contains(&double_forward_square)
                                 && self.pieces[double_forward_square as usize].is_none()
                             {
-                                moves.push(double_forward_square as u8);
+                                moves.push(double_forward_square as u32);
                             }
                         }
                     }
@@ -129,10 +131,10 @@ impl BoardState {
                             let capture_square = capture_rank * 8 + capture_file;
                             if let Some(target_piece) = &self.pieces[capture_square as usize] {
                                 if target_piece.white != piece.white {
-                                    moves.push(capture_square as u8);
+                                    moves.push(capture_square as u32);
                                 }
-                            } else if Some(capture_square as u8) == self.en_passant_square {
-                                moves.push(capture_square as u8);
+                            } else if Some(capture_square as u32) == self.en_passant_square {
+                                moves.push(capture_square as u32);
                             }
                         }
                     }
@@ -150,11 +152,11 @@ impl BoardState {
                             let target_square = rank * 8 + file;
                             if let Some(target_piece) = &self.pieces[target_square as usize] {
                                 if target_piece.white != piece.white {
-                                    moves.push(target_square as u8);
+                                    moves.push(target_square as u32);
                                 }
                                 break;
                             } else {
-                                moves.push(target_square as u8);
+                                moves.push(target_square as u32);
                             }
                         }
                     }
@@ -172,11 +174,11 @@ impl BoardState {
                             let target_square = rank * 8 + file;
                             if let Some(target_piece) = &self.pieces[target_square as usize] {
                                 if target_piece.white != piece.white {
-                                    moves.push(target_square as u8);
+                                    moves.push(target_square as u32);
                                 }
                                 break;
                             } else {
-                                moves.push(target_square as u8);
+                                moves.push(target_square as u32);
                             }
                         }
                     }
@@ -203,11 +205,11 @@ impl BoardState {
                             let target_square = rank * 8 + file;
                             if let Some(target_piece) = &self.pieces[target_square as usize] {
                                 if target_piece.white != piece.white {
-                                    moves.push(target_square as u8);
+                                    moves.push(target_square as u32);
                                 }
                                 break;
                             } else {
-                                moves.push(target_square as u8);
+                                moves.push(target_square as u32);
                             }
                         }
                     }
@@ -231,10 +233,10 @@ impl BoardState {
                             let target_square = new_rank * 8 + new_file;
                             if let Some(target_piece) = &self.pieces[target_square as usize] {
                                 if target_piece.white != piece.white {
-                                    moves.push(target_square as u8);
+                                    moves.push(target_square as u32);
                                 }
                             } else {
-                                moves.push(target_square as u8);
+                                moves.push(target_square as u32);
                             }
                         }
                     }
@@ -258,16 +260,16 @@ impl BoardState {
                             let target_square = new_rank * 8 + new_file;
 
                             if self.white_to_play == piece.white
-                                && checked_squares.contains(&(target_square as u8))
+                                && checked_squares.contains(&(target_square as u32))
                             {
                                 continue;
                             }
                             if let Some(target_piece) = &self.pieces[target_square as usize] {
                                 if target_piece.white != piece.white {
-                                    moves.push(target_square as u8);
+                                    moves.push(target_square as u32);
                                 }
                             } else {
-                                moves.push(target_square as u8);
+                                moves.push(target_square as u32);
                             }
                         }
                     }
@@ -338,7 +340,7 @@ impl BoardState {
         moves
     }
 
-    pub fn make_move(&mut self, from: u8, to: u8) {
+    pub fn make_move(&mut self, from: u32, to: u32) {
         let piece = self.pieces[from as usize].take();
         if let Some(pc) = &piece {
             match pc.kind {
@@ -431,19 +433,19 @@ impl BoardState {
         }
     }
 
-    pub fn checked_squares(&self) -> Vec<u8> {
+    pub fn checked_squares(&self) -> Vec<u32> {
         let mut squares = Vec::new();
         for (i, square) in self.pieces.iter().enumerate() {
             if let Some(piece) = square
                 && piece.white != self.white_to_play
             {
-                for mv in self.legal_moves(i as u8) {
+                for mv in self.legal_moves(i as u32) {
                     if piece.kind == PieceKind::Pawn {
                         if piece.white {
-                            if i as u8 + 8 == mv || i as u8 + 16 == mv {
+                            if i as u32 + 8 == mv || i as u32 + 16 == mv {
                                 continue;
                             }
-                        } else if i as u8 - 8 == mv || i as u8 - 16 == mv {
+                        } else if i as u32 - 8 == mv || i as u32 - 16 == mv {
                             continue;
                         }
                     }
@@ -468,13 +470,13 @@ impl BoardState {
         for (i, square) in self.pieces.iter().enumerate() {
             if let Some(piece) = square
                 && piece.white == self.white_to_play
-                && !self.legal_moves(i as u8).is_empty()
+                && !self.legal_moves(i as u32).is_empty()
             {
                 return 0;
             }
         }
 
-        if self.checked_squares().contains(&(king_square as u8)) {
+        if self.checked_squares().contains(&(king_square as u32)) {
             1
         } else {
             2

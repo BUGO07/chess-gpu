@@ -75,7 +75,7 @@ struct GameInfo {
 }
 
 impl GameInfo {
-    fn set_legal_moves(&mut self, moves: &[u8]) {
+    fn set_legal_moves(&mut self, moves: &[u32]) {
         self.clear_legal_moves();
         for &mv in moves.iter() {
             if mv < 32 {
@@ -398,7 +398,7 @@ impl State {
         let text_render_pipeline_layout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("Render Pipeline Layout"),
-                bind_group_layouts: &[&texture_bind_group_layout],
+                bind_group_layouts: &[&texture_bind_group_layout, &game_info_bind_group_layout],
                 push_constant_ranges: &[],
             });
 
@@ -763,8 +763,10 @@ impl State {
             render_pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
             render_pass.draw_indexed(0..6, 0, 0..self.piece_instances.len() as u32);
 
+            // text
             render_pass.set_pipeline(&self.text_render_pipeline);
             render_pass.set_bind_group(0, &self.text_texture_bind_group, &[]);
+            render_pass.set_bind_group(1, &self.game_info_bind_group, &[]);
             render_pass.set_vertex_buffer(0, self.text_vb.slice(..));
             render_pass.set_vertex_buffer(1, self.text_instance_buffer.slice(..));
             render_pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
@@ -833,13 +835,17 @@ impl ApplicationHandler<State> for App {
                         ..
                     },
                 ..
-            } => match (code, key_state.is_pressed()) {
-                (KeyCode::Escape, true) => event_loop.exit(),
-                (KeyCode::Space, true) => {
-                    println!("{}", state.board_state.to_fen());
+            } => {
+                if key_state.is_pressed() {
+                    match code {
+                        KeyCode::Escape => event_loop.exit(),
+                        KeyCode::Space => {
+                            println!("{}", state.board_state.to_fen());
+                        }
+                        _ => {}
+                    }
                 }
-                _ => {}
-            },
+            }
             WindowEvent::CursorMoved {
                 device_id: _,
                 position,
@@ -888,8 +894,8 @@ impl ApplicationHandler<State> for App {
                             state.game_info.clear_legal_moves();
                         } else if state.game_info.selected() != 0 && state.game_info.hovered() != 0
                         {
-                            let from = state.game_info.selected() as u8 - 1;
-                            let to = state.game_info.hovered() as u8 - 1;
+                            let from = state.game_info.selected() - 1;
+                            let to = state.game_info.hovered() - 1;
                             let legal_moves = state.board_state.legal_moves(from);
                             state.game_info.set_legal_moves(&legal_moves);
                             if legal_moves.contains(&to) {
@@ -904,9 +910,8 @@ impl ApplicationHandler<State> for App {
                             {
                                 state.game_info.set_selected(state.game_info.hovered());
 
-                                let legal_moves = state
-                                    .board_state
-                                    .legal_moves(state.game_info.hovered() as u8 - 1);
+                                let legal_moves =
+                                    state.board_state.legal_moves(state.game_info.hovered() - 1);
                                 state.game_info.set_legal_moves(&legal_moves);
                             } else {
                                 state.game_info.set_selected(0);
@@ -919,16 +924,15 @@ impl ApplicationHandler<State> for App {
                         {
                             state.game_info.set_selected(state.game_info.hovered());
 
-                            let legal_moves = state
-                                .board_state
-                                .legal_moves(state.game_info.hovered() as u8 - 1);
+                            let legal_moves =
+                                state.board_state.legal_moves(state.game_info.hovered() - 1);
                             state.game_info.set_legal_moves(&legal_moves);
                         }
                     } else {
                         if state.holding_piece && state.game_info.selected() != 0 {
-                            let from = state.game_info.selected() as u8 - 1;
+                            let from = state.game_info.selected() - 1;
                             if state.game_info.hovered() != 0 {
-                                let to = state.game_info.hovered() as u8 - 1;
+                                let to = state.game_info.hovered() - 1;
                                 if state.board_state.legal_moves(from).contains(&to) {
                                     state.board_state.make_move(from, to);
                                 }

@@ -75,7 +75,7 @@ impl BoardState {
         (white_oo, white_ooo, black_oo, black_ooo)
     }
 
-    fn parse_en_passant(en_passant: &str) -> anyhow::Result<Option<u8>> {
+    fn parse_en_passant(en_passant: &str) -> anyhow::Result<Option<u32>> {
         if en_passant == "-" {
             return Ok(None);
         }
@@ -114,13 +114,13 @@ impl BoardState {
         Ok(Some(file + rank * 8))
     }
 
-    fn parse_halfmove(halfmove: &str) -> anyhow::Result<u64> {
+    fn parse_halfmove(halfmove: &str) -> anyhow::Result<u32> {
         halfmove
             .parse()
             .map_err(|_| anyhow::anyhow!("bad halfmove: {halfmove}"))
     }
 
-    fn parse_fullmove(fullmove: &str) -> anyhow::Result<u64> {
+    fn parse_fullmove(fullmove: &str) -> anyhow::Result<u32> {
         fullmove
             .parse()
             .map_err(|_| anyhow::anyhow!("bad fullmove: {fullmove}"))
