@@ -108,11 +108,14 @@ impl GameInfo {
         // bits 15-16 (00 = ongoing, 01 = white wins, 10 = black wins, 11 = draw)
         self.state = (self.state & !(0x3 << 15)) | ((game_over & 0x3) << 15);
     }
+    fn game_over(&self) -> u32 {
+        (self.state >> 15) & 0x3
+    }
 }
 
 #[repr(C)]
 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
-struct Instance {
+pub struct Instance {
     position: [f32; 3],
     data: u32, // bit 0 = white, bits 1-4 = piece, bits 5-10 = index
 }
@@ -133,9 +136,7 @@ impl Instance {
     fn index(&self) -> u32 {
         (self.data >> 5) & 0x3F
     }
-}
 
-impl Instance {
     fn desc() -> wgpu::VertexBufferLayout<'static> {
         wgpu::VertexBufferLayout {
             array_stride: size_of::<Instance>() as wgpu::BufferAddress,
@@ -528,21 +529,13 @@ impl State {
             usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
         });
 
-        let text = "GAMEOVER";
-        let mut text_instances = Vec::new();
+        let text_instances = Vec::new();
 
-        const CHARACTERS: &str = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+-=()[]{}<>/*:#%!?.,'\"@&$";
-        for (i, c) in text.chars().enumerate() {
-            text_instances.push(Instance {
-                position: [-(text.len() as f32) * 0.05 + i as f32 * 0.1, -0.05, 0.0],
-                data: CHARACTERS.find(c).unwrap() as u32,
-            });
-        }
-
-        let text_instance_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        let text_instance_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Instance Buffer"),
-            contents: bytemuck::cast_slice(&text_instances),
             usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+            size: (size_of::<Instance>() * 1024) as wgpu::BufferAddress,
+            mapped_at_creation: false,
         });
 
         let piece_vertices =
@@ -578,7 +571,7 @@ impl State {
             usage: wgpu::BufferUsages::INDEX,
         });
 
-        Ok(Self {
+        let mut state = Self {
             surface,
             device,
             queue,
@@ -605,7 +598,12 @@ impl State {
             mouse_down: false,
             holding_piece: false,
             window,
-        })
+        };
+
+        state.update_text_instances("WHITE", 0.0, -0.6);
+        state.update_text_instances("BLACK", 0.0, 0.6);
+
+        Ok(state)
     }
 
     pub fn update_instances(&mut self) {
@@ -651,13 +649,55 @@ impl State {
         }
     }
 
+    pub fn update_text_instances(&mut self, text: &str, base_x: f32, base_y: f32) {
+        const CHARACTERS: &str = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+-=()[]{}<>/*:#%!?.,'\"@&$";
+
+        let lines = text.lines().collect::<Vec<_>>();
+        for (j, line) in lines.iter().enumerate() {
+            for (i, character) in line.chars().enumerate() {
+                if let Some(char_index) = CHARACTERS.find(character) {
+                    self.text_instances.push(Instance {
+                        position: [
+                            base_x + (i as f32 - line.len() as f32 * 0.5) * 0.1,
+                            base_y + (j as f32 - lines.len() as f32 * 0.5) * 0.1,
+                            0.0,
+                        ],
+                        data: char_index as u32,
+                    });
+                    self.queue.write_buffer(
+                        &self.text_instance_buffer,
+                        0,
+                        bytemuck::cast_slice(&self.text_instances),
+                    );
+                }
+            }
+        }
+    }
+
     pub fn update(&mut self) {
         let now = std::time::Instant::now();
         self.game_info.time += now.duration_since(self.last_time).as_secs_f32();
         self.game_info
             .set_white_to_play(self.board_state.white_to_play);
-        self.game_info
-            .set_game_over(self.board_state.game_over as u32);
+        if self.game_info.game_over() != self.board_state.game_over {
+            self.update_text_instances(
+                &format!(
+                    "GAME OVER\n{} WINS",
+                    if self.board_state.game_over == 1 {
+                        if !self.board_state.white_to_play {
+                            "WHITE"
+                        } else {
+                            "BLACK"
+                        }
+                    } else {
+                        "DRAW"
+                    }
+                ),
+                0.0,
+                0.0,
+            );
+        }
+        self.game_info.set_game_over(self.board_state.game_over);
 
         self.last_time = now;
         self.queue.write_buffer(
@@ -723,15 +763,12 @@ impl State {
             render_pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
             render_pass.draw_indexed(0..6, 0, 0..self.piece_instances.len() as u32);
 
-            if self.board_state.game_over != 0 {
-                render_pass.set_pipeline(&self.text_render_pipeline);
-                render_pass.set_bind_group(0, &self.text_texture_bind_group, &[]);
-                render_pass.set_vertex_buffer(0, self.text_vb.slice(..));
-                render_pass.set_vertex_buffer(1, self.text_instance_buffer.slice(..));
-                render_pass
-                    .set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
-                render_pass.draw_indexed(0..6, 0, 0..self.text_instances.len() as u32);
-            }
+            render_pass.set_pipeline(&self.text_render_pipeline);
+            render_pass.set_bind_group(0, &self.text_texture_bind_group, &[]);
+            render_pass.set_vertex_buffer(0, self.text_vb.slice(..));
+            render_pass.set_vertex_buffer(1, self.text_instance_buffer.slice(..));
+            render_pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+            render_pass.draw_indexed(0..6, 0, 0..self.text_instances.len() as u32);
         }
 
         self.queue.submit(std::iter::once(encoder.finish()));
@@ -749,7 +786,6 @@ impl ApplicationHandler<State> for App {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         let window_attributes = Window::default_attributes()
             .with_title("GPU Chess")
-            .with_resizable(false)
             .with_inner_size(PhysicalSize::new(800, 800));
 
         let window = Arc::new(event_loop.create_window(window_attributes).unwrap());

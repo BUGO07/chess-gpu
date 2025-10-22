@@ -463,7 +463,8 @@ impl BoardState {
             .position(|p| matches!(p, Some(piece) if piece.kind == PieceKind::King && piece.white == self.white_to_play))
             else {
                 println!("{:?}", self.pieces);
-                return 3};
+                return 3
+            };
         for (i, square) in self.pieces.iter().enumerate() {
             if let Some(piece) = square
                 && piece.white == self.white_to_play
